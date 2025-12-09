@@ -1,0 +1,20 @@
+services:
+  orion:
+    image: fiware/orion:3.10.1
+    container_name: fiware-orion
+    depends_on:
+      - mongo
+    ports:
+      - "1026:1026"
+    command: -dbhost mongo -logLevel DEBUG
+    environment:
+      - ORION_LOG_FOR_HUMANS=false
+  mongo:
+    image: mongo:7.0
+    container_name: fiware-mongo
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+volumes:
+  mongo_data:
