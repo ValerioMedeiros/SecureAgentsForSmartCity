@@ -57,10 +57,11 @@ def upsert_traffic_signal(entity: Dict[str, Any], trace_id: str) -> None:
 
 
 def update_priority_corridor(entity_id: str, value: str, trace_id: str, token: Optional[str] = None) -> Dict[str, Any]:
-    url = f"{ORION_BASE_URL}/v2/entities/{_encode_entity_id(entity_id)}/attrs/priorityCorridor/value"
+    url = f"{ORION_BASE_URL}/v2/entities/{_encode_entity_id(entity_id)}/attrs/priorityCorridor"
     headers = _headers(token)
-    headers["Content-Type"] = "text/plain"  # Orion expects plain text for /value updates
-    response = requests.put(url, headers=headers, data=value)
+    headers["Content-Type"] = "application/json" 
+    payload = {"value": value}
+    response = requests.put(url, headers=headers, json=payload)
     logger.info(
         "Updated priorityCorridor",
         extra={"traceId": trace_id, "extra_fields": {"status": response.status_code, "value": value}},
