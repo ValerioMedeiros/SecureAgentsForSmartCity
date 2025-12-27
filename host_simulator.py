@@ -6,6 +6,8 @@ import requests
 
 from logging_utils import configure_logger
 from policy_engine import evaluate_plan, USER_TOKEN, HUMAN_APPROVAL_TOKEN
+from dotenv import load_dotenv
+load_dotenv()
 
 logger = configure_logger("host")
 
@@ -15,6 +17,8 @@ TRAFFIC_SIGNAL_ID = os.getenv("TRAFFIC_SIGNAL_ID", "TrafficSignal:001")
 
 class Step(Dict[str, Any]):
     """Typed alias used for clarity in the simple plan representation."""
+
+# Tool de decisão de autonomia(level, trace_id)
 
 
 def build_plan_autonomy_1(trace_id: str) -> Dict[str, Any]:

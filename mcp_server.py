@@ -6,6 +6,9 @@ from pydantic import BaseModel
 
 from logging_utils import configure_logger
 from ngsi_client import get_traffic_signal, update_priority_corridor
+from dotenv import load_dotenv
+
+load_dotenv()
 
 app = FastAPI(title="MCP Server")
 logger = configure_logger("mcp_server")
