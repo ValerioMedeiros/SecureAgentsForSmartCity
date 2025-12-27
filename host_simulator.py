@@ -16,12 +16,11 @@ logger = configure_logger("host")
 MCP_SERVER_URL = os.getenv("MCP_SERVER_URL", "http://localhost:8000/mcp")
 TRAFFIC_SIGNAL_ID = os.getenv("TRAFFIC_SIGNAL_ID", "TrafficSignal:001")
 
-
 class Step(Dict[str, Any]):
     """Typed alias used for clarity in the simple plan representation."""
 
 
-prompt = """
+AGENT_PROMPT = """
 You are a Smart City Traffic Management Agent responsible for coordinating traffic signals to ensure public safety and efficient traffic flow.
 
 Your role is to analyze incoming traffic-related requests and determine the appropriate response plan.
@@ -155,71 +154,47 @@ def execute_plan(plan: Dict[str, Any]) -> None:
         response.raise_for_status()
 
 
-from langchain_core.prompts import PromptTemplate
-from langchain_openai import ChatOpenAI
-LANGCHAIN_AVAILABLE = True
 
-
-def decide_plan_with_llm(query: str, trace_id: str) -> Dict[str, Any]:
+def build_and_execute_plan(autonomy_level: int, trace_id: str) -> Dict[str, Any]:
     """
-    Use LangChain/OpenAI to decide autonomy level and reason.
-    Expects the model to return strict JSON: {"autonomy_level": 1, "reason": "..."}
-    If LangChain / OPENAI not available or LLM call fails, raise an error.
+    Build and execute a traffic management plan based on the specified autonomy level.
+    autonomy_level: 1 for automatic emergency response, 3 for supervised critical situations
+    trace_id: Unique identifier for tracing the request
     """
-    logger.info(
-        "Agent deciding plan",
-        extra={"traceId": trace_id, "extra_fields": {"query": query}},
-    )
-    logger.debug(
-        "decide_plan_with_llm start",
-        extra={
-            "traceId": trace_id,
-            "extra_fields": {"langchain_available": LANGCHAIN_AVAILABLE, "openai_key_present": bool(os.getenv("OPENAI_API_KEY"))},
-        },
-    )
+    if autonomy_level == 1:
+        plan = build_plan_autonomy_1(trace_id)
+    elif autonomy_level == 3:
+        plan = build_plan_autonomy_3(trace_id)
+    else:
+        raise ValueError(f"Unsupported autonomy level: {autonomy_level}")
 
-    if not (LANGCHAIN_AVAILABLE and os.getenv("OPENAI_API_KEY")):
-        raise RuntimeError("LLM path not available: LangChain or OPENAI_API_KEY missing")
+    execute_plan(plan)
+    return {"status": "Plan executed", "plan_id": plan["plan_id"]}
 
-    logger.debug("LangChain available and OPENAI API key is present", extra={"traceId": trace_id})
 
-    prompt_json = (
-        prompt
-        + '\n\nRespond ONLY with a JSON object exactly like:\n'
-        + '{{"autonomy_level": 1, "reason": "short reason here"}}\n\n'
-        + 'User request:\n{query}'
-    )
+def build_agent():
+    from langchain.agents import create_agent
+    from langchain_openai import ChatOpenAI
 
-    template = PromptTemplate(
-        input_variables=["query"],
-        template=prompt_json,
-    )
+    if not os.getenv("OPENAI_API_KEY"):
+        raise RuntimeError(
+            "LLM path not available: OPENAI_API_KEY missing"
+        )
 
     llm = ChatOpenAI(
-        model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+        model=os.getenv("OPENAI_MODEL", "gpt-5-nano"),
         temperature=0,
     )
 
-    chain = template | llm
+    tools = [build_and_execute_plan]
 
-    try:
-        out_msg = chain.invoke({"query": query})
-        out = out_msg.content if hasattr(out_msg, "content") else str(out_msg)
-        logger.debug("LLM raw output", extra={"traceId": trace_id, "extra_fields": {"output": out}})
-        parsed = json.loads(out)
-        autonomy = int(parsed.get("autonomy_level"))
-        reason = parsed.get("reason", "no reason provided")
-        logger.debug(
-            "LLM parsed decision",
-            extra={"traceId": trace_id, "extra_fields": {"autonomy_level": autonomy, "reason": reason}},
-        )
-        return {"autonomy_level": autonomy, "reason": reason}
-    except Exception as exc:
-        logger.warning(
-            "LLM decision failed",
-            extra={"traceId": trace_id, "extra_fields": {"error": str(exc)}},
-        )
-        raise RuntimeError(f"LLM decision failed: {exc}")
+    agent = create_agent(
+        model=llm,
+        tools=tools,
+        system_prompt=AGENT_PROMPT,
+    )
+
+    return agent
 
 
 if __name__ == "__main__":
@@ -233,18 +208,17 @@ if __name__ == "__main__":
         "An ambulance needs to reach the hospital urgently",
     ]
 
+    prompt = " Trace ID: " + trace + "\n" + queries[1]
+
     if scenario == "A":
         plan = build_plan_autonomy_1(trace)
+        execute_plan(plan)
     elif scenario == "B":
         plan = build_plan_autonomy_3(trace)
+        execute_plan(plan)
     elif scenario == "LLM":
-        decision = decide_plan_with_llm(queries[0], trace)
-        if decision["autonomy_level"] == 3:
-            plan = build_plan_autonomy_3(trace)
-        else:
-            plan = build_plan_autonomy_1(trace)
-        plan.setdefault("approval", {})["reason"] = decision.get("reason")
+        agent = build_agent()
+        response = agent.invoke({"messages": [{"role": "user", "content": prompt}]})
+        print("Agent Response:", response)
     else:
         raise SystemExit("Unsupported scenario. Use A, B or LLM.")
-
-    execute_plan(plan)
