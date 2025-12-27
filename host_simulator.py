@@ -143,6 +143,14 @@ if __name__ == "__main__":
     trace = str(uuid.uuid4())
     scenario = os.getenv("SCENARIO", "A").upper()
 
+    # Example queries
+    queries = [
+        "There is a firefighter truck that has to go across the town",
+        "Heavy rain is expected and we need to protect the power plant area",
+        "An ambulance needs to reach the hospital urgently",
+    ]
+
+    # Decisão a ser feita pelo agente com base no cenário
     if scenario == "A":
         plan = build_plan_autonomy_1(trace)
     elif scenario == "B":
