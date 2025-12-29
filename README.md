@@ -41,7 +41,12 @@ Minimal, reproducible demo for the article **"Secure Decision-Making with Audita
    ```bash
    SCENARIO=B python host_simulator.py
    ```
-8. **Inspect TrafficSignal state**
+
+8. **Run Scenario LLM (Agent receives a query and decides autonomy level)**
+   ```bash
+   SCENARIO=LLM python host_simulator.py
+   ```
+9. **Inspect TrafficSignal state**
    ```bash
    python inspect_traffic_signal.py
    ```
