@@ -65,48 +65,47 @@ Root-level Python files are kept as compatibility wrappers, so existing commands
 
 ### 1) One-time setup
 
-```powershell
-python -m venv .venv
-. .venv/Scripts/Activate.ps1
-pip install -r requirements.txt
+```bash
+uv python install 3.11
+uv sync # Install uv for easier
 ```
 
 ### 2) Start infrastructure
 
-```powershell
+```bash
 docker compose up -d
 ```
 
-### 3) Set environment variables (session)
+### 3) Set environment variables on .env file (session)
 
-```powershell
-$env:USER_TOKEN="user-token"
-$env:HUMAN_APPROVAL_TOKEN="human-approval-token"
-$env:OPA_URL="http://localhost:8181"
-$env:OPA_POLICY_PATH="v1/data/smartcity/allow"
-$env:JSON_LOG_FILE="logs/traces.jsonl"
+```bash
+USER_TOKEN="user-token"
+HUMAN_APPROVAL_TOKEN="human-approval-token"
+OPA_URL="http://localhost:8181"
+OPA_POLICY_PATH="v1/data/smartcity/allow"
+JSON_LOG_FILE="logs/traces.jsonl"
 ```
 
 ### 4) Run core flow (minimal)
 
 Terminal 1:
-```powershell
-uvicorn src.smartcity.services.mcp_server:app --host 0.0.0.0 --port 8000
+```bash
+uv run uvicorn src.smartcity.services.mcp_server:app --host 0.0.0.0 --port 8000
 ```
 
 Terminal 2:
-```powershell
-python -m src.smartcity.app.init_traffic_signal
+```bash
+uv run -m src.smartcity.app.init_traffic_signal
 $env:SCENARIO="A"
-python -m src.smartcity.app.host_simulator
+uv run -m src.smartcity.app.host_simulator
 ```
 
 ### 5) Optional: monitor, dashboard, experiments
 
-```powershell
-uvicorn src.smartcity.services.monitor:app --host 0.0.0.0 --port 8010
-streamlit run src/smartcity/ui/dashboard.py
-python -m src.smartcity.app.experiments
+```bash
+uv run uvicorn src.smartcity.services.monitor:app --host 0.0.0.0 --port 8010
+uv run streamlit run src/smartcity/ui/dashboard.py
+uv run -m src.smartcity.app.experiments
 ```
 
 Scenarios:

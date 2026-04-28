@@ -10,12 +10,12 @@ import os
 
 from dotenv import load_dotenv
 
-# Load environment variables
-load_dotenv()
-
 from smartcity.core.models import MonitorEvent
 from smartcity.core.planner import build_candidate_plan
 from smartcity.infra.logging_utils import configure_logger
+
+# Load environment variables
+load_dotenv()
 
 logger = configure_logger("example_llm_planner")
 
@@ -157,7 +157,7 @@ def print_configuration_info():
     print(f"OpenAI API Key Set: {openai_key_set}")
     print(f"OpenAI Model: {openai_model}")
     print(f"LLM Temperature: {llm_temp}")
-    print(f"\nNote: Set LLM_PLANNER_ENABLED=true to enable LLM-based planning")
+    print("\nNote: Set LLM_PLANNER_ENABLED=true to enable LLM-based planning")
 
 
 if __name__ == "__main__":
