@@ -36,7 +36,7 @@ except ImportError:
 
 
 from ..infra.logging_utils import configure_logger
-from .models import ActionType, MonitorEvent, RiskLevel, validate_plan_dict
+from .models import ActionType, MonitorEvent, RiskLevel, validate_plan_dict # type: ignore  # noqa: F401
 
 load_dotenv()
 
