@@ -8,6 +8,7 @@ from ..core.executor import execute_candidate_plan
 from ..core.models import MonitorEvent
 from ..core.planner import build_candidate_plan
 from ..infra.logging_utils import configure_logger
+from .init_traffic_signal import main as initialize_traffic_signal
 
 load_dotenv()
 
@@ -75,5 +76,6 @@ def run_once(scenario: str) -> None:
 
 
 if __name__ == "__main__":
+    initialize_traffic_signal()
     selected_scenario = os.getenv("SCENARIO", "A").upper()
     run_once(selected_scenario)
