@@ -8,6 +8,7 @@ from typing import Any, Dict, Optional
 from dotenv import load_dotenv
 
 from ..infra.logging_utils import configure_logger
+from .llm_planner import generate_plan_with_llm
 from .models import (
     ActionType,
     CandidatePlan,
@@ -97,24 +98,37 @@ def _build_rule_based_plan(event: MonitorEvent, trace_id: str) -> Dict[str, Any]
 def _llm_planner_payload(
     event: MonitorEvent, trace_id: str
 ) -> Optional[Dict[str, Any]]:
-    # TODO: Implement llm planner integration. For now, this function checks for a raw JSON payload in the environment variable LLM_PLAN_JSON.
+    """
+    Generate plan using LLM planner with LangChain.
+
+    Falls back to legacy LLM_PLAN_JSON environment variable if available,
+    then attempts LangChain-based generation if enabled.
+    """
+    # Support legacy LLM_PLAN_JSON environment variable
     raw_json = os.getenv("LLM_PLAN_JSON")
-    if not raw_json:
-        return None
+    if raw_json:
+        try:
+            payload = json.loads(raw_json)
+            payload.setdefault("telemetry", {})
+            payload["telemetry"]["traceId"] = trace_id
+            payload.setdefault("scenario", event.event_type)
+            logger.info(
+                "Using legacy LLM_PLAN_JSON payload",
+                extra={"traceId": trace_id},
+            )
+            return payload
+        except json.JSONDecodeError:
+            logger.warning(
+                "Invalid LLM_PLAN_JSON; attempting LangChain planner",
+                extra={"traceId": trace_id},
+            )
 
-    try:
-        payload = json.loads(raw_json)
-    except json.JSONDecodeError:
-        logger.warning(
-            "Invalid LLM_PLAN_JSON; falling back to deterministic planner",
-            extra={"traceId": trace_id},
-        )
-        return None
+    # Use LangChain-based LLM planner
+    llm_plan = generate_plan_with_llm(event, trace_id)
+    if llm_plan:
+        return llm_plan
 
-    payload.setdefault("telemetry", {})
-    payload["telemetry"]["traceId"] = trace_id
-    payload.setdefault("scenario", event.event_type)
-    return payload
+    return None
 
 
 def build_candidate_plan(event: MonitorEvent, trace_id: str) -> CandidatePlan:

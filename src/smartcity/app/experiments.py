@@ -37,6 +37,9 @@ def _timed_run(event: MonitorEvent) -> Tuple[float, bool]:
 
 
 def experiment_latency(runs: int = 5) -> Dict[str, Any]:
+    """
+    Experiment to measure the latency of plan execution under different scenarios.
+    """
     samples: List[float] = []
     executed: List[bool] = []
     for _ in range(runs):
@@ -54,6 +57,11 @@ def experiment_latency(runs: int = 5) -> Dict[str, Any]:
 
 
 def experiment_guardrails() -> Dict[str, Any]:
+    """
+    Test that malformed plans are blocked by the guardrails and do not cause system failures. 
+    We attempt to build a candidate plan from a known malformed fixture and check if it raises an 
+    exception, which would indicate that the guardrails are working as intended.
+    """
     trace_id = str(uuid.uuid4())
     malformed = malformed_plan_fixture(trace_id)
     blocked = False
@@ -75,6 +83,9 @@ def experiment_guardrails() -> Dict[str, Any]:
 
 
 def experiment_robustness() -> Dict[str, Any]:
+    """
+    Run each scenario and report the policy decision and execution
+    """
     outputs: List[Dict[str, Any]] = []
     for name, event in SCENARIOS.items():
         trace_id = str(uuid.uuid4())
