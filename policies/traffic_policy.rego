@@ -51,9 +51,9 @@ allow := {
 allow := {
   "allowed": false,
   "risk_level": "high",
-  "approval_mode": "deny",
-  "verdict_color": "red",
-  "reason": "High risk denied"
+  "approval_mode": "human",
+  "verdict_color": "yellow",
+  "reason": "High risk needs approval"
 } if {
   input.token == input.expected_user_token
   risk := lower(input.plan.risk_level)
