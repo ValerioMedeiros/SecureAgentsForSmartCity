@@ -52,9 +52,20 @@ if frame.empty:
     st.caption("Run one scenario first: python -m src.smartcity.app.host_simulator")
     st.stop()
 
-trace_options = sorted(
-    frame.get("traceId", pd.Series(dtype=str)).dropna().unique().tolist()
+# Order trace IDs by latest timestamp (most recent first). Fall back to name sort if needed.
+ts = pd.to_datetime(frame.get("timestamp", pd.Series(dtype="datetime64[ns]")), errors="coerce")
+trace_order = (
+    pd.DataFrame({"traceId": frame.get("traceId"), "timestamp": ts})
+    .dropna(subset=["traceId"])
+    .groupby("traceId", as_index=False)
+    .agg({"timestamp": "max"})
+    .sort_values("timestamp", ascending=False)
 )
+trace_options = trace_order["traceId"].tolist()
+if not trace_options:
+    trace_options = sorted(
+        frame.get("traceId", pd.Series(dtype=str)).dropna().unique().tolist()
+    )
 selected_trace = st.selectbox("Trace ID", options=trace_options)
 subset = frame[frame.get("traceId") == selected_trace].copy()
 
