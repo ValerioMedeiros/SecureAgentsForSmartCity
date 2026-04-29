@@ -100,28 +100,7 @@ def _llm_planner_payload(
 ) -> Optional[Dict[str, Any]]:
     """
     Generate plan using LLM planner with LangChain.
-
-    Falls back to legacy LLM_PLAN_JSON environment variable if available,
-    then attempts LangChain-based generation if enabled.
     """
-    # Support legacy LLM_PLAN_JSON environment variable
-    raw_json = os.getenv("LLM_PLAN_JSON")
-    if raw_json:
-        try:
-            payload = json.loads(raw_json)
-            payload.setdefault("telemetry", {})
-            payload["telemetry"]["traceId"] = trace_id
-            payload.setdefault("scenario", event.event_type)
-            logger.info(
-                "Using legacy LLM_PLAN_JSON payload",
-                extra={"traceId": trace_id},
-            )
-            return payload
-        except json.JSONDecodeError:
-            logger.warning(
-                "Invalid LLM_PLAN_JSON; attempting LangChain planner",
-                extra={"traceId": trace_id},
-            )
 
     # Use LangChain-based LLM planner
     llm_plan = generate_plan_with_llm(event, trace_id)
