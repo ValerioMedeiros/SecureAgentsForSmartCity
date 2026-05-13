@@ -16,5 +16,18 @@ services:
       - "27017:27017"
     volumes:
       - mongo_data:/data/db
+  opa:
+    image: openpolicyagent/opa:0.68.0
+    container_name: smartcity-opa
+    command:
+      - "run"
+      - "--server"
+      - "--addr=0.0.0.0:8181"
+      - "--set=decision_logs.console=true"
+      - "/policies"
+    ports:
+      - "8181:8181"
+    volumes:
+      - ./policies:/policies:ro
 volumes:
   mongo_data:
