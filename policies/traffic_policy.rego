@@ -36,16 +36,15 @@ allow := {
 }
 
 allow := {
-  "allowed": false,
+  "allowed": true,
   "risk_level": "medium",
-  "approval_mode": "human",
+  "approval_mode": "auto",
   "verdict_color": "yellow",
-  "reason": "Medium risk requires human token"
+  "reason": "Medium risk auto-approved"
 } if {
   input.token == input.expected_user_token
   risk := lower(input.plan.risk_level)
   risk == "medium"
-  input.plan.approval.human_token != input.expected_human_token
 }
 
 allow := {

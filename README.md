@@ -50,7 +50,8 @@ Root-level Python files are kept as compatibility wrappers, so existing commands
 - `src/smartcity/infra/ngsi_client.py` - NGSI-v2 entity and subscription helpers
 - `src/smartcity/services/mcp_server.py` - MCP API surface
 - `src/smartcity/services/monitor.py` - monitor endpoint and event loop trigger
-- `src/smartcity/app/host_simulator.py` - scenario runner
+- `src/smartcity/app/examples_llm_planner.py` - interactive planner examples (with optional execution)
+- `src/smartcity/app/host_simulator.py` - scenario runner (alternative, parametrized by SCENARIO env var)
 - `src/smartcity/app/experiments.py` - experiment routines
 - `src/smartcity/app/init_traffic_signal.py` - seed helper
 - `src/smartcity/app/inspect_traffic_signal.py` - inspection helper
@@ -79,26 +80,32 @@ docker compose up -d
 ### 3) Set environment variables on .env file (session)
 
 ```bash
-USER_TOKEN="user-token"
-HUMAN_APPROVAL_TOKEN="human-approval-token"
-OPA_URL="http://localhost:8181"
-OPA_POLICY_PATH="v1/data/smartcity/allow"
-JSON_LOG_FILE="logs/traces.jsonl"
+cp .env.example .env
 ```
 
 ### 4) Run core flow (minimal)
 
-Terminal 1:
+Terminal 1 (MCP server):
 ```bash
 uv run uvicorn src.smartcity.services.mcp_server:app --host 0.0.0.0 --port 8000
 ```
 
-Terminal 2:
+Terminal 2 (Planner examples with execution):
 ```bash
-uv run -m src.smartcity.app.init_traffic_signal
+$env:EXECUTE_PLANS="true"
+uv run -m src.smartcity.app.examples_llm_planner
+```
+
+Or use the parametrized scenario runner:
+```bash
 $env:SCENARIO="A"
 uv run -m src.smartcity.app.host_simulator
 ```
+
+Scenarios (for host_simulator or examples with specific events):
+- `A`: ambulance-only
+- `B`: flood-only
+- `C`: combined-flood-corridor
 
 ### 5) Optional: monitor, dashboard, experiments
 
@@ -108,12 +115,43 @@ uv run streamlit run src/smartcity/ui/dashboard.py
 uv run -m src.smartcity.app.experiments
 ```
 
-Scenarios:
-- `A`: ambulance-only
-- `B`: flood-only
-- `C`: combined-flood-corridor
+## Running Plans
 
-Note: root files are compatibility wrappers. Prefer `python -m src.smartcity...` and `uvicorn src.smartcity...` commands to avoid path/cwd issues.
+### Option 1: Interactive Examples with Plan Execution
+
+The `examples_llm_planner.py` script demonstrates 4 planning scenarios and can optionally execute them:
+
+```bash
+# Generate plans only (no execution)
+uv run -m src.smartcity.app.examples_llm_planner
+
+# Generate plans AND execute them (with policy evaluation)
+$env:EXECUTE_PLANS="true"
+uv run -m src.smartcity.app.examples_llm_planner
+```
+
+This is useful for:
+- Exploring plan generation across different event types
+- Testing policy decisions and approval flows
+- Verifying end-to-end execution in a controlled manner
+
+### Option 2: Parametrized Scenario Runner
+
+The `host_simulator.py` script runs a single scenario determined by the `SCENARIO` environment variable:
+
+```bash
+$env:SCENARIO="A"
+uv run -m src.smartcity.app.host_simulator
+```
+
+This is useful for:
+- Running specific predefined scenarios repeatably
+- Scripting scenario-based experiments
+- Integration with monitoring and log aggregation
+
+**Note:** Both scripts require the MCP server running on port 8000.
+
+**Note:** Root files are compatibility wrappers. Prefer `python -m src.smartcity...` and `uvicorn src.smartcity...` commands to avoid path/cwd issues.
 
 ## Plan Schema and Explainability
 
