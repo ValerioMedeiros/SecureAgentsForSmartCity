@@ -7,7 +7,9 @@ from typing import Any, Dict, Optional
 
 from dotenv import load_dotenv
 
+from ..infra.audit import record_event
 from ..infra.logging_utils import configure_logger
+from ..infra.metrics import ERRORS_TOTAL, PLANS_TOTAL, stage_timer
 from .llm_planner import generate_plan_with_llm
 from .models import (
     ActionType,
@@ -111,9 +113,24 @@ def _llm_planner_payload(
 
 
 def build_candidate_plan(event: MonitorEvent, trace_id: str) -> CandidatePlan:
-    llm_payload = _llm_planner_payload(event, trace_id)
-    plan_data = llm_payload if llm_payload else _build_rule_based_plan(event, trace_id)
-    plan = validate_plan_dict(plan_data)
+    with stage_timer("plan", "planner") as timing:
+        try:
+            llm_payload = _llm_planner_payload(event, trace_id)
+            plan_data = (
+                llm_payload if llm_payload else _build_rule_based_plan(event, trace_id)
+            )
+            source = "llm" if llm_payload else "rule_based"
+            plan = validate_plan_dict(plan_data)
+        except Exception:
+            ERRORS_TOTAL.labels(component="planner", kind="plan_build").inc()
+            raise
+
+    PLANS_TOTAL.labels(
+        scenario=plan.scenario,
+        risk_level=plan.risk_level.value,
+        source=source,
+    ).inc()
+
     logger.info(
         "Candidate plan generated",
         extra={
@@ -123,6 +140,35 @@ def build_candidate_plan(event: MonitorEvent, trace_id: str) -> CandidatePlan:
                 "scenario": plan.scenario,
                 "risk_level": plan.risk_level.value,
                 "autonomy_level": plan.approval.autonomy_level,
+                "source": source,
+                "duration_ms": timing["duration_ms"],
+            },
+        },
+    )
+    record_event(
+        component="planner",
+        event_type="PLAN_CREATED",
+        trace_id=trace_id,
+        plan_id=plan.plan_id,
+        actor=source,
+        outcome="created",
+        payload={
+            "scenario": plan.scenario,
+            "risk_level": plan.risk_level.value,
+            "autonomy_level": plan.approval.autonomy_level,
+            "goal": plan.goal,
+            "steps": [
+                {"id": s.id, "action": s.action.value, "params": s.params}
+                for s in plan.steps
+            ],
+            "duration_ms": timing["duration_ms"],
+            "event": {
+                "event_type": event.event_type,
+                "ambulance_detected": event.ambulance_detected,
+                "heavy_rain": event.heavy_rain,
+                "flood_risk": event.flood_risk,
+                "crowd_level": event.crowd_level,
+                "location": event.location,
             },
         },
     )
