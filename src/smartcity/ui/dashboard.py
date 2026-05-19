@@ -2,13 +2,19 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from pathlib import Path
 from typing import Any, Dict, List
 
 import pandas as pd
 import streamlit as st
 
-from ..infra.audit import iter_entries, verify_chain
+if __package__ in (None, ""):
+    _PROJECT_ROOT = Path(__file__).resolve().parents[3]
+    if str(_PROJECT_ROOT) not in sys.path:
+        sys.path.insert(0, str(_PROJECT_ROOT))
+
+from src.smartcity.infra.audit import iter_entries, verify_chain
 
 LOG_FILE = os.getenv("JSON_LOG_FILE", "logs/traces.jsonl")
 AUDIT_FILE = os.getenv("AUDIT_LOG_FILE", "logs/audit.jsonl")
