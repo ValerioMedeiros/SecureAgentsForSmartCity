@@ -31,6 +31,7 @@ class WeatherObserved(BaseModel):
     precipitation: float = Field(default=False)
     humidity: float = Field(default=False)
     atmospheric_pressure: float = Field(default=False)
+    wind_speed: float = Field(default=False)
     location: str = Field(default="Avenue 1")
     notes: Optional[str] = None
     timestamp: Optional[str] = None

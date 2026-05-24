@@ -44,21 +44,23 @@ logger = configure_logger("llm_planner")
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4-turbo")
-TRAFFIC_SIGNAL_ID = os.getenv("TRAFFIC_SIGNAL_ID", "TrafficSignal:001")
 LLM_PLANNER_ENABLED = os.getenv("LLM_PLANNER_ENABLED", "false").lower() == "true"
 LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.3"))
 
 
 PLAN_GENERATION_PROMPT = PromptTemplate(
     input_variables=["event_data", "available_actions", "schema_example"],
-    template="""You are an intelligent traffic management planner for a smart city system.
-Your task is to generate a traffic management plan in response to a monitoring event.
+    template="""You are an intelligent pump management planner for a smart city system.
+Your task is to generate a pump management plan in response to a monitoring event.
 
 ## Event Data
 {event_data}
 
 ## Available Actions
 {available_actions}
+
+## Available Pumps
+{available_pumps}
 
 ## Plan Schema (REQUIRED - must match exactly)
 {schema_example}
@@ -69,14 +71,9 @@ Your task is to generate a traffic management plan in response to a monitoring e
 3. Return ONLY valid JSON matching the schema above
 4. Set risk_level based on event severity:
    - LOW: normal conditions, light rain
-   - MEDIUM: heavy rain, moderate crowd
-   - HIGH: flood risk, ambulance detected
-5. Set autonomy_level:
-   - 1 for LOW risk (auto-approve)
-   - 2 for MEDIUM risk (human review)
-   - 3 for HIGH risk (human review required)
-6. Use realistic goal and scenario descriptions
-7. Always include exactly 3 steps: read-state, set-priority, notify
+   - MEDIUM: heavy rain, moderate wind
+   - HIGH: flood risk, heavy winds
+5. Use realistic goal and scenario descriptions based on the event context
 
 ## Output
 Return ONLY the JSON plan, no explanation or markdown:
@@ -87,17 +84,17 @@ Return ONLY the JSON plan, no explanation or markdown:
 def _get_available_actions_description() -> str:
     """Generate description of available actions for the LLM."""
     return f"""
-1. {ActionType.GET_TRAFFIC_SIGNAL_STATE.value}
-   - Reads current state of traffic signal
+1. {ActionType.TURN_OFF_PUMP.value}
+   - Turns off a pump
    - Required params: entity_id (string)
-   
-2. {ActionType.SET_PRIORITY_CORRIDOR.value}
-   - Sets priority corridor mode
-   - Required params: entity_id (string), value (enum: "emergency", "critical-infra", "none")
-   
-3. {ActionType.NOTIFY_TRAFFIC_AGENTS.value}
-   - Notifies traffic agents of situation
-   - Required params: message (string)
+
+2. {ActionType.TURN_ON_PUMP.value}
+   - Turns on a pump
+   - Required params: entity_id (string)
+
+3. {ActionType.NOTIFY_USER.value}
+   - Notifies a user
+   - Required params: message (string), user_id (string)
 """
 
 
@@ -106,27 +103,27 @@ def _get_schema_example() -> str:
     return json.dumps(
         {
             "plan_id": "uuid-will-be-generated",
-            "goal": "Create emergency corridor for ambulance",
-            "scenario": "ambulance-only",
+            "goal": "Prevent basement flooding on Avenue 1",
+            "scenario": "heavy-precipitation",
             "risk_level": "high",
             "steps": [
                 {
-                    "id": "read-state",
-                    "action": ActionType.GET_TRAFFIC_SIGNAL_STATE.value,
-                    "params": {"entity_id": TRAFFIC_SIGNAL_ID},
+                    "id": "turn-on-pump-1",
+                    "action": ActionType.TURN_ON_PUMP.value,
+                    "params": {"entity_id": "pump-station-42"},
                 },
                 {
-                    "id": "set-priority",
-                    "action": ActionType.SET_PRIORITY_CORRIDOR.value,
-                    "params": {"entity_id": TRAFFIC_SIGNAL_ID, "value": "emergency"},
+                    "id": "turn-off-pump-2",
+                    "action": ActionType.TURN_OFF_PUMP.value,
+                    "params": {"entity_id": "pump-station-17"},
                 },
                 {
-                    "id": "notify",
-                    "action": ActionType.NOTIFY_TRAFFIC_AGENTS.value,
-                    "params": {"message": "Emergency corridor activated for ambulance"},
+                    "id": "notify-owner",
+                    "action": ActionType.NOTIFY_USER.value,
+                    "params": {"message": "Pumps adjusted due to heavy precipitation", "user_id": "maintenance-team"},
                 },
             ],
-            "approval": {"autonomy_level": 3},
+            "approval": {"autonomy_level": 2},
             "telemetry": {"traceId": "will-be-injected"},
         },
         indent=2,
@@ -216,27 +213,17 @@ def generate_plan_with_llm(
 
     try:
         # Prepare prompt inputs
-        event_data = json.dumps(
-            {
-                "event_type": event.event_type,
-                "ambulance_detected": event.ambulance_detected,
-                "heavy_rain": event.heavy_rain,
-                "flood_risk": event.flood_risk,
-                "crowd_level": event.crowd_level,
-                "location": event.location,
-                "notes": event.notes,
-            },
-            indent=2,
-        )
+        event_data = event.model_dump(by_alias=True)
 
         available_actions = _get_available_actions_description()
         schema_example = _get_schema_example()
+        available_pumps = get_available_pumps()  # TODO - Implement this function to provide real pump status
 
-        # Build and invoke the chain
         prompt = PLAN_GENERATION_PROMPT.format(
             event_data=event_data,
             available_actions=available_actions,
             schema_example=schema_example,
+            available_pumps=available_pumps
         )
 
         logger.debug(
