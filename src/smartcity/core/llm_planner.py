@@ -7,32 +7,11 @@ import os
 from typing import Any, Dict, Optional
 
 from dotenv import load_dotenv
-# Handle optional LangChain imports
-try:
-    from langchain_core.prompts import PromptTemplate
-    from langchain_openai import ChatOpenAI
 
-    LANGCHAIN_AVAILABLE = True
-except ImportError:
-    LANGCHAIN_AVAILABLE = False
+from langchain_core.prompts import PromptTemplate
+from langchain_openai import ChatOpenAI
 
-    class PromptTemplate:
-        """Dummy PromptTemplate for when LangChain is not installed."""
 
-        def __init__(self, *args, **kwargs):
-            pass
-
-        def format(self, **kwargs):
-            return ""
-
-    class ChatOpenAI:
-        """Dummy ChatOpenAI for when LangChain is not installed."""
-
-        def __init__(self, *args, **kwargs):
-            pass
-
-        def invoke(self, prompt):
-            return None
 
 
 from ..infra.logging_utils import configure_logger
@@ -132,9 +111,6 @@ def _get_schema_example() -> str:
 
 def _get_llm_client() -> Optional[ChatOpenAI]:
     """Initialize LangChain ChatOpenAI client if API key is available."""
-    if not LANGCHAIN_AVAILABLE:
-        logger.warning("LangChain not installed; LLM planner unavailable")
-        return None
 
     if not OPENAI_API_KEY:
         logger.warning("OPENAI_API_KEY not set; LLM planner unavailable")
