@@ -137,6 +137,7 @@ def build_candidate_plan(event: MonitorEvent, trace_id: str) -> CandidatePlan:
             "traceId": trace_id,
             "extra_fields": {
                 "plan_id": plan.plan_id,
+                "goal": plan.goal,
                 "scenario": plan.scenario,
                 "risk_level": plan.risk_level.value,
                 "autonomy_level": plan.approval.autonomy_level,

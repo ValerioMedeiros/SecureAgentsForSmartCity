@@ -17,10 +17,16 @@ from ..infra.ngsi_client import create_subscription
 logger = configure_logger("monitor")
 app = FastAPI(title="Monitor Service")
 
-MONITOR_CALLBACK_URL = os.getenv(
-    "MONITOR_CALLBACK_URL", "http://localhost:8010/monitor/notify"
-)
+MONITOR_CALLBACK_URL = os.getenv("MONITOR_CALLBACK_URL", "http://localhost:8010/monitor/notify")
+
 TRAFFIC_SIGNAL_ID = os.getenv("TRAFFIC_SIGNAL_ID", "TrafficSignal:001")
+
+def _get_attr_value(item: Dict[str, Any], key: str, default=None):
+    """Extract value from NGSI-v2 attribute (supports both {value: X} and raw scalar)."""
+    attr = item.get(key, default)
+    if isinstance(attr, dict):
+        return attr.get("value", default)
+    return attr if attr is not None else default
 
 
 def _notification_to_event(notification: Dict[str, Any]) -> MonitorEvent:
@@ -29,18 +35,41 @@ def _notification_to_event(notification: Dict[str, Any]) -> MonitorEvent:
         return MonitorEvent(event_type="empty")
 
     item = data[0]
-    weather = str(item.get("weather", "normal")).lower()
-    crowd = str(item.get("crowd", "normal")).lower()
-    event_type = str(item.get("eventType", "combined")).lower()
+    entity_type = str(item.get("type", "")).lower()
+
+    # --- WeatherObserved (from WeatherStation) ---
+    if entity_type == "weatherobserved":
+        precipitation = float(_get_attr_value(item, "precipitation", 0))
+        humidity = float(_get_attr_value(item, "humidity", 0))
+        pressure = float(_get_attr_value(item, "atmosphericPressure", 1013))
+        location = str(_get_attr_value(item, "location", "unknown"))
+
+        heavy_rain = precipitation > 0.50
+        flood_risk = precipitation > 5.0 or pressure < 1005
+
+        return MonitorEvent(
+            event_type="weather",
+            ambulance_detected=False,
+            heavy_rain=heavy_rain,
+            flood_risk=flood_risk,
+            crowd_level="high" if flood_risk else ("normal" if not heavy_rain else "dense"),
+            location=location,
+            notes=f"precipitation={precipitation}mm humidity={humidity}% pressure={pressure}hPa",
+        )
+
+    # --- TrafficSignal or generic event ---
+    weather = str(_get_attr_value(item, "weather", "normal")).lower()
+    crowd = str(_get_attr_value(item, "crowd", "normal")).lower()
+    event_type = str(_get_attr_value(item, "eventType", "combined")).lower()
 
     return MonitorEvent(
         event_type=event_type,
-        ambulance_detected=bool(item.get("ambulanceDetected", False)),
+        ambulance_detected=bool(_get_attr_value(item, "ambulanceDetected", False)),
         heavy_rain=weather in {"rain", "storm", "heavy_rain"},
-        flood_risk=bool(item.get("floodRisk", False)),
+        flood_risk=bool(_get_attr_value(item, "floodRisk", False)),
         crowd_level=crowd,
-        location=str(item.get("location", "unknown")),
-        notes=str(item.get("notes", "")) or None,
+        location=str(_get_attr_value(item, "location", "unknown")),
+        notes=str(_get_attr_value(item, "notes", "")) or None,
     )
 
 

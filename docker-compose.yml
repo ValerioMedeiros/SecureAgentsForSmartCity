@@ -1,21 +1,27 @@
 services:
-  orion:
-    image: fiware/orion:3.10.1
-    container_name: fiware-orion
-    depends_on:
-      - mongo
-    ports:
-      - "1026:1026"
-    command: -dbhost mongo -logLevel DEBUG
-    environment:
-      - ORION_LOG_FOR_HUMANS=false
   mongo:
     image: mongo:7.0
-    container_name: fiware-mongo
+    container_name: smartcity-mongo
     ports:
       - "27017:27017"
     volumes:
       - mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  orion:
+    image: fiware/orion:3.10.1
+    container_name: smartcity-orion
+    depends_on:
+      mongo:
+        condition: service_healthy
+    ports:
+      - "1026:1026"
+    command: -dbhost mongo -logLevel DEBUG
+
   opa:
     image: openpolicyagent/opa:0.68.0
     container_name: smartcity-opa
@@ -29,5 +35,6 @@ services:
       - "8181:8181"
     volumes:
       - ./policies:/policies:ro
+
 volumes:
   mongo_data:
