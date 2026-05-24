@@ -8,7 +8,13 @@ from typing import Any, Dict
 import requests
 from dotenv import load_dotenv
 
+from ..infra.audit import record_event
 from ..infra.logging_utils import configure_logger
+from ..infra.metrics import (
+    ERRORS_TOTAL,
+    POLICY_DECISIONS_TOTAL,
+    stage_timer,
+)
 from .models import ApprovalMode, CandidatePlan, PolicyDecision, RiskLevel
 
 load_dotenv()
@@ -83,8 +89,9 @@ def _opa_policy(
             "expected_human_token": HUMAN_APPROVAL_TOKEN,
         }
     }
-    response = requests.post(url, json=payload, timeout=OPA_TIMEOUT_SECONDS)
-    response.raise_for_status()
+    with stage_timer("policy_opa", "opa"):
+        response = requests.post(url, json=payload, timeout=OPA_TIMEOUT_SECONDS)
+        response.raise_for_status()
     result = response.json().get("result", {})
 
     mode_raw = result.get("approval_mode", ApprovalMode.DENY.value)
@@ -104,20 +111,48 @@ def evaluate_plan(
 ) -> PolicyDecision:
     validated_plan = CandidatePlan.model_validate(plan)
 
-    try:
-        decision = _opa_policy(validated_plan, provided_token, trace_id)
-    except Exception as exc:  # pragma: no cover - network path
-        logger.warning(
-            "OPA unavailable, using fallback policy",
-            extra={
-                "traceId": trace_id,
-                "extra_fields": {"error": str(exc)},
-            },
-        )
-        decision = _fallback_policy(validated_plan, provided_token)
+    with stage_timer("policy", "policy_engine") as timing:
+        try:
+            decision = _opa_policy(validated_plan, provided_token, trace_id)
+        except Exception as exc:  # pragma: no cover - network path
+            ERRORS_TOTAL.labels(component="opa", kind="opa_unavailable").inc()
+            logger.warning(
+                "OPA unavailable, using fallback policy",
+                extra={
+                    "traceId": trace_id,
+                    "extra_fields": {"error": str(exc)},
+                },
+            )
+            decision = _fallback_policy(validated_plan, provided_token)
+
+    POLICY_DECISIONS_TOTAL.labels(
+        approval_mode=decision.approval_mode.value,
+        risk_level=decision.risk_level.value,
+        allowed=str(decision.allowed).lower(),
+        source=decision.source,
+    ).inc()
 
     logger.info(
         "Policy evaluated",
-        extra={"traceId": trace_id, "extra_fields": decision.model_dump()},
+        extra={
+            "traceId": trace_id,
+            "extra_fields": {**decision.model_dump(), "duration_ms": timing["duration_ms"]},
+        },
+    )
+    record_event(
+        component="policy_engine",
+        event_type="POLICY_DECIDED",
+        trace_id=trace_id,
+        plan_id=validated_plan.plan_id,
+        actor=decision.source,
+        outcome=decision.approval_mode.value,
+        payload={
+            "allowed": decision.allowed,
+            "approval_mode": decision.approval_mode.value,
+            "risk_level": decision.risk_level.value,
+            "verdict_color": decision.verdict_color,
+            "reason": decision.reason,
+            "duration_ms": timing["duration_ms"],
+        },
     )
     return decision

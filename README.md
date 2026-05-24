@@ -33,7 +33,17 @@ Research-oriented proof-of-concept implementing a minimal and explainable MAPE-K
 
 ### Knowledge/Audit
 - Structured JSON logs in stdout and file (`logs/traces.jsonl`).
-- Dashboard for trace reconstruction: `src/smartcity/ui/dashboard.py`.
+- Tamper-evident audit log with SHA-256 hash chain (`logs/audit.jsonl`) covering plan creation, policy decisions, executor verdicts, and every MCP tool invocation.
+- Dashboard for trace reconstruction with audit-chain verification and per-stage latency: `src/smartcity/ui/dashboard.py`.
+
+### Observability
+
+- Prometheus metrics exposed at `GET /metrics` on the monitor service (port 8010) and the MCP server (port 8000).
+- Metrics include: `smartcity_plans_total`, `smartcity_policy_decisions_total`, `smartcity_executions_total`, `smartcity_mcp_calls_total`, `smartcity_errors_total`, and `smartcity_stage_duration_seconds` (histogram per stage/component for the `monitor`, `plan`, `policy`, `policy_opa`, `execute`, `mcp_call_server`, and `mcp_call_client` stages).
+- Audit query endpoints on the monitor service:
+  - `GET /audit/entries?trace_id=&plan_id=&component=&event_type=&limit=`
+  - `GET /audit/entries/{id}`
+  - `GET /audit/verify` — walks the hash chain and reports integrity issues.
 
 ## Repository Layout
 
