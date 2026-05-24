@@ -1,26 +1,31 @@
+import asyncio
 import uuid
 
+from ..infra.fiware_mcp_client import upsert_entity
 from ..infra.logging_utils import configure_logger
-from ..infra.ngsi_client import upsert_traffic_signal
 
-logger = configure_logger("host")
+logger = configure_logger("init")
+
+ENTITY = {
+    "id": "TrafficSignal:001",
+    "type": "TrafficSignal",
+    "status": "normal",
+    "priorityCorridor": "none",
+    "location": "Avenue 1",
+}
+
+
+async def _init() -> None:
+    trace_id = str(uuid.uuid4())
+    result = await upsert_entity(ENTITY)
+    logger.info(
+        "TrafficSignal initialised",
+        extra={"traceId": trace_id, "extra_fields": {"result": result, **ENTITY}},
+    )
 
 
 def main() -> None:
-    trace_id = str(uuid.uuid4())
-    entity = {
-        "id": "TrafficSignal:001",
-        "type": "TrafficSignal",
-        "status": "normal",
-        "priorityCorridor": "none",
-        "location": "Avenue 1",
-    }
-
-    upsert_traffic_signal(entity, trace_id)
-    logger.info(
-        "Initial TrafficSignal created",
-        extra={"traceId": trace_id, "extra_fields": entity},
-    )
+    asyncio.run(_init())
 
 
 if __name__ == "__main__":

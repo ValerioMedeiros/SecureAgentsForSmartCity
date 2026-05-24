@@ -4,8 +4,8 @@ from typing import Any, Dict, Optional
 from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel
 
+from ..infra.fiware_mcp_client import get_entity, update_attribute
 from ..infra.logging_utils import configure_logger
-from ..infra.ngsi_client import get_traffic_signal, update_priority_corridor
 
 app = FastAPI(title="MCP Server")
 logger = configure_logger("mcp_server")
@@ -32,12 +32,18 @@ async def handle_mcp(call: McpCall, request: Request):
 
     try:
         if call.method == "getTrafficSignalState":
-            result = get_traffic_signal(call.params["entity_id"], trace_id, token)
+            result = await get_entity(call.params["entity_id"])
+
         elif call.method == "setPriorityCorridor":
-            result = update_priority_corridor(
-                call.params["entity_id"], call.params["value"], trace_id, token
+            result = await update_attribute(
+                entity_id=call.params["entity_id"],
+                attribute="priorityCorridor",
+                value=call.params["value"],
             )
+
         elif call.method == "notifyTrafficAgents":
+            # Notification is simulated via logging for auditability.
+            # Replace with sendWhatsAppAlert tool call when WhatsApp integration is added.
             logger.info(
                 "Notify traffic agents",
                 extra={
@@ -46,11 +52,13 @@ async def handle_mcp(call: McpCall, request: Request):
                 },
             )
             result = {"status": "notified"}
+
         else:
-            raise HTTPException(status_code=400, detail="Unknown method")
+            raise HTTPException(status_code=400, detail=f"Unknown method: {call.method}")
+
     except HTTPException:
         raise
-    except Exception as exc:  # pragma: no cover
+    except Exception as exc:
         logger.exception("MCP tool error", extra={"traceId": trace_id})
         raise HTTPException(status_code=500, detail=str(exc))
 
