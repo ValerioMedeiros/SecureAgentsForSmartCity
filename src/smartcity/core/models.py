@@ -8,12 +8,9 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 
 
 class ActionType(str, Enum):
-    GET_TRAFFIC_SIGNAL_STATE = "getTrafficSignalState"
-    SET_PRIORITY_CORRIDOR = "setPriorityCorridor"
-    NOTIFY_TRAFFIC_AGENTS = "notifyTrafficAgents"
-    GET_PUMP_STATUS = "getPumpStatus"
-    TURN_ON_PUMP = "turnOnPump"
     TURN_OFF_PUMP = "turnOffPump"
+    TURN_ON_PUMP = "turnOnPump"
+    NOTIFY_USER = "notifyUser"
 
 
 class RiskLevel(str, Enum):
@@ -27,20 +24,33 @@ class ApprovalMode(str, Enum):
     HUMAN = "human"
     DENY = "deny"
 
+class User(BaseModel):
+    username: str
+    token: str
+    permissions: List[ActionType] = Field(default_factory=list)
 
-class MonitorEvent(BaseModel):
+class WeatherObserved(BaseModel):
     event_type: str = Field(default="combined")
-    ambulance_detected: bool = Field(default=False)
-    heavy_rain: bool = Field(default=False)
-    flood_risk: bool = Field(default=False)
-    crowd_level: str = Field(default="normal")
+    station_id: str = Field(default=False)
+    precipitation: float = Field(default=False)
+    humidity: float = Field(default=False)
+    atmospheric_pressure: float = Field(default=False)
+    wind_speed: float = Field(default=False)
     location: str = Field(default="Avenue 1")
     notes: Optional[str] = None
     # Geo context — populated by monitor for WeatherObserved events
     coordinates: Optional[tuple] = Field(default=None)           # (lon, lat)
     coverage_radius_m: int = Field(default=300)                  # search radius for nearest pump
     pump_id: Optional[str] = Field(default=None)                 # resolved via geo-query
+    timestamp: Optional[str] = None
 
+class MonitorEvent(BaseModel):
+    """
+    Contains list of observed conditions that can trigger different candidate plans and policy decisions.
+    """
+    event_type: str
+    weather_observations : Optional[List[WeatherObserved]] = None
+    timestamp: Optional[str] = None
 
 class PlanStep(BaseModel):
     id: str
@@ -50,12 +60,9 @@ class PlanStep(BaseModel):
     @model_validator(mode="after")
     def validate_required_params(self) -> "PlanStep":
         required = {
-            ActionType.GET_TRAFFIC_SIGNAL_STATE: {"entity_id"},
-            ActionType.SET_PRIORITY_CORRIDOR: {"entity_id", "value"},
-            ActionType.NOTIFY_TRAFFIC_AGENTS: {"message"},
-            ActionType.GET_PUMP_STATUS: {"pump_id"},
-            ActionType.TURN_ON_PUMP: {"pump_id"},
-            ActionType.TURN_OFF_PUMP: {"pump_id"},
+            ActionType.TURN_OFF_PUMP: {"entity_id"},
+            ActionType.TURN_ON_PUMP: {"entity_id"},
+            ActionType.NOTIFY_USER: {"message", "user_id"},
         }
         required_keys = required[self.action]
         missing = sorted(k for k in required_keys if k not in self.params)
@@ -100,7 +107,6 @@ class PolicyDecision(BaseModel):
     allowed: bool
     risk_level: RiskLevel
     approval_mode: ApprovalMode
-    verdict_color: str
     reason: str
     source: str
 
