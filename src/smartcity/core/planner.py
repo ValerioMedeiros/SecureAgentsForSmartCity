@@ -23,14 +23,40 @@ load_dotenv()
 
 logger = configure_logger("planner")
 
-TRAFFIC_SIGNAL_ID = os.getenv("TRAFFIC_SIGNAL_ID", "TrafficSignal:001")
+PUMP_ENTITY_ID = os.getenv("PUMP_ENTITY_ID", "PumpStation:001")
 
 
 def _risk_from_event(event: MonitorEvent) -> RiskLevel:
-    if event.flood_risk:
+    # Determine risk from event_type and weather observations
+    et = (event.event_type or "").lower()
+
+    # If event explicitly mentions flood, treat as high risk
+    if "flood" in et:
         return RiskLevel.HIGH
-    if event.heavy_rain or event.crowd_level.lower() in {"high", "dense"}:
-        return RiskLevel.MEDIUM
+
+    # If event mentions pump failure together with weather observations indicating
+    # heavy precipitation, escalate to HIGH
+    if "pump" in et:
+        # default pump issues -> medium risk
+        risk = RiskLevel.MEDIUM
+        observations = event.weather_observations or []
+        for obs in observations:
+            try:
+                if getattr(obs, "precipitation", 0) and float(obs.precipitation) > 50:
+                    return RiskLevel.HIGH
+            except Exception:
+                continue
+        return risk
+
+    # Inspect weather observations for heavy rain
+    observations = event.weather_observations or []
+    for obs in observations:
+        try:
+            if getattr(obs, "precipitation", 0) and float(obs.precipitation) > 30:
+                return RiskLevel.MEDIUM
+        except Exception:
+            continue
+
     return RiskLevel.LOW
 
 
@@ -43,48 +69,85 @@ def _approval_level(risk_level: RiskLevel) -> int:
 
 
 def _build_rule_based_plan(event: MonitorEvent, trace_id: str) -> Dict[str, Any]:
+    """Build a simple rule-based pump/flood plan based on the event."""
     risk_level = _risk_from_event(event)
     autonomy_level = _approval_level(risk_level)
 
-    if event.ambulance_detected:
-        corridor_value = "emergency"
-        goal = "Create emergency corridor for ambulance"
-        scenario = "ambulance-only"
-        message = "Emergency corridor activated for ambulance"
-    elif event.flood_risk or event.heavy_rain:
-        corridor_value = "critical-infra"
-        goal = "Protect critical infrastructure under weather stress"
-        scenario = "flood-only"
-        message = "Weather response rerouting activated"
-    else:
-        corridor_value = "none"
-        goal = "Maintain normal traffic operation"
-        scenario = "baseline"
-        message = "Traffic remains in normal mode"
+    et = (event.event_type or "").lower()
 
-    if event.ambulance_detected and (event.heavy_rain or event.flood_risk):
-        scenario = "combined-flood-corridor"
-        goal = "Coordinate emergency corridor with weather risk mitigation"
-        corridor_value = "emergency"
-        message = "Combined emergency and weather protocol activated"
-
+    # Default plan values
+    goal = "Maintain normal infrastructure operation"
+    scenario = "baseline"
+    message = "No immediate pump actions required"
     steps = [
         {
-            "id": "read-state",
-            "action": ActionType.GET_TRAFFIC_SIGNAL_STATE.value,
-            "params": {"entity_id": TRAFFIC_SIGNAL_ID},
-        },
-        {
-            "id": "set-priority",
-            "action": ActionType.SET_PRIORITY_CORRIDOR.value,
-            "params": {"entity_id": TRAFFIC_SIGNAL_ID, "value": corridor_value},
-        },
-        {
             "id": "notify",
-            "action": ActionType.NOTIFY_TRAFFIC_AGENTS.value,
-            "params": {"message": message},
-        },
+            "action": ActionType.NOTIFY_USER.value,
+            "params": {
+                "message": "Monitoring normal conditions",
+                "user_id": "ops-team",
+            },
+        }
     ]
+
+    # Pump failure handling
+    if "pump" in et:
+        scenario = "pump-failure"
+        goal = "Isolate and mitigate pump failure"
+        message = "Pump failure detected; taking protective actions"
+        steps = [
+            {
+                "id": "turn-off-pump",
+                "action": ActionType.TURN_OFF_PUMP.value,
+                "params": {"entity_id": PUMP_ENTITY_ID},
+            },
+            {
+                "id": "notify-ops",
+                "action": ActionType.NOTIFY_USER.value,
+                "params": {"message": message, "user_id": "maintenance-team"},
+            },
+        ]
+
+    # Flood response: ensure pumps are running to mitigate flooding
+    if "flood" in et:
+        scenario = "flood-response"
+        goal = "Activate pumps to mitigate flood risk"
+        message = "Flood risk detected; activating pumps"
+        steps = [
+            {
+                "id": "turn-on-pump",
+                "action": ActionType.TURN_ON_PUMP.value,
+                "params": {"entity_id": PUMP_ENTITY_ID},
+            },
+            {
+                "id": "notify-ops",
+                "action": ActionType.NOTIFY_USER.value,
+                "params": {"message": message, "user_id": "maintenance-team"},
+            },
+        ]
+
+    # Combined pump + flood -> prioritize safety and human approval
+    if "pump" in et and "flood" in et:
+        scenario = "combined-pump-flood"
+        goal = "Coordinate pump operations under flood conditions"
+        message = "Pump fault during flood; follow combined mitigation protocol"
+        steps = [
+            {
+                "id": "turn-off-faulty-pump",
+                "action": ActionType.TURN_OFF_PUMP.value,
+                "params": {"entity_id": PUMP_ENTITY_ID},
+            },
+            {
+                "id": "turn-on-backup",
+                "action": ActionType.TURN_ON_PUMP.value,
+                "params": {"entity_id": PUMP_ENTITY_ID},
+            },
+            {
+                "id": "notify-ops",
+                "action": ActionType.NOTIFY_USER.value,
+                "params": {"message": message, "user_id": "maintenance-team"},
+            },
+        ]
 
     return {
         "plan_id": str(uuid.uuid4()),
@@ -163,14 +226,7 @@ def build_candidate_plan(event: MonitorEvent, trace_id: str) -> CandidatePlan:
                 for s in plan.steps
             ],
             "duration_ms": timing["duration_ms"],
-            "event": {
-                "event_type": event.event_type,
-                "ambulance_detected": event.ambulance_detected,
-                "heavy_rain": event.heavy_rain,
-                "flood_risk": event.flood_risk,
-                "crowd_level": event.crowd_level,
-                "location": event.location,
-            },
+            "event": event.model_dump(),
         },
     )
     return plan

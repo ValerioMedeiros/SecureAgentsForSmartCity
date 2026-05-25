@@ -2,7 +2,7 @@
 Example usage of the LLM planner with LangChain.
 
 This script demonstrates how to configure and use the LLM planning system
-for intelligent traffic management in a smart city.
+for pump-related incident handling and traffic coordination in a smart city.
 
 Set EXECUTE_PLANS=true to also execute the generated plans.
 """
@@ -14,10 +14,9 @@ import uuid
 from dotenv import load_dotenv
 
 from ..core.executor import execute_candidate_plan
-from ..core.models import MonitorEvent
+from ..core.models import MonitorEvent, WeatherObserved
 from ..core.planner import build_candidate_plan
 from ..infra.logging_utils import configure_logger
-from .init_traffic_signal import main as initialize_traffic_signal
 
 # Load environment variables
 load_dotenv()
@@ -59,19 +58,22 @@ def _print_execution_results(report):
 
 
 def example_1_basic_llm_planning():
-    """Example 1: Basic LLM planning with an ambulance event."""
+    """Example 1: Basic LLM planning with a pump failure event."""
     print("\n" + "=" * 60)
-    print("Example 1: Ambulance Detection with LLM Planning")
+    print("Example 1: Pump Failure Detection with LLM Planning")
     print("=" * 60)
 
     event = MonitorEvent(
-        event_type="ambulance-emergency",
-        ambulance_detected=True,
-        heavy_rain=False,
-        flood_risk=False,
-        crowd_level="normal",
-        location="Avenue 1 near Hospital",
-        notes="Ambulance approaching intersection",
+        event_type="pump-failure",
+        weather_observations=[
+            WeatherObserved(
+                event_type="pump-failure",
+                station_id="Pumping Station 7",
+                precipitation=0,
+                location="Pumping Station 7",
+                notes="Pump fault detected: reduced pressure and vibration alerts",
+            )
+        ],
     )
 
     try:
@@ -95,12 +97,15 @@ def example_2_flood_response():
 
     event = MonitorEvent(
         event_type="weather-flood",
-        ambulance_detected=False,
-        heavy_rain=True,
-        flood_risk=True,
-        crowd_level="high",
-        location="Downtown District",
-        notes="Heavy rainfall detected, flood risk rising",
+        weather_observations=[
+            WeatherObserved(
+                event_type="rain",
+                station_id="Station-09",
+                precipitation=75.0,
+                location="Downtown District",
+                notes="Heavy rainfall detected, flood risk rising",
+            )
+        ],
     )
 
     try:
@@ -117,19 +122,29 @@ def example_2_flood_response():
 
 
 def example_3_combined_scenario():
-    """Example 3: Combined emergency (ambulance + flood) scenario."""
+    """Example 3: Combined scenario (pump failure + flood)."""
     print("\n" + "=" * 60)
-    print("Example 3: Combined Scenario (Ambulance + Flood)")
+    print("Example 3: Combined Scenario (Pump Failure + Flood)")
     print("=" * 60)
 
     event = MonitorEvent(
-        event_type="combined",
-        ambulance_detected=True,
-        heavy_rain=True,
-        flood_risk=True,
-        crowd_level="dense",
-        location="Main Street",
-        notes="Ambulance emergency during heavy rain and flooding",
+        event_type="combined-pump-flood",
+        weather_observations=[
+            WeatherObserved(
+                event_type="rain",
+                station_id="Station-02",
+                precipitation=60.0,
+                location="Main Street",
+                notes="Heavy rain during pump fault",
+            ),
+            WeatherObserved(
+                event_type="pump-failure",
+                station_id="Pumping Station 3",
+                precipitation=0,
+                location="Pumping Station 3",
+                notes="Pump failure detected: reduced pressure and vibration alerts",
+            ),
+        ],
     )
 
     try:
@@ -148,17 +163,12 @@ def example_3_combined_scenario():
 def example_4_normal_operation():
     """Example 4: Normal operation (no incidents)."""
     print("\n" + "=" * 60)
-    print("Example 4: Normal Traffic Operation")
+    print("Example 4: Normal City Operation")
     print("=" * 60)
 
     event = MonitorEvent(
         event_type="baseline",
-        ambulance_detected=False,
-        heavy_rain=False,
-        flood_risk=False,
-        crowd_level="normal",
-        location="City Center",
-        notes="Standard traffic flow",
+        weather_observations=[],
     )
 
     try:
@@ -197,20 +207,10 @@ def print_configuration_info():
 
 if __name__ == "__main__":
     print("\n" + "=" * 60)
-    print("LLM Planner Examples - Smart City Traffic Management")
+    print("LLM Planner Examples - Smart City (pump use cases)")
     print("=" * 60)
 
     print_configuration_info()
-
-    # Initialize traffic signal if execution is enabled
-    if EXECUTE_PLANS:
-        print("\nInitializing TrafficSignal for execution...")
-        try:
-            initialize_traffic_signal()
-            print("✓ TrafficSignal initialized")
-        except Exception as e:
-            print(f"✗ Failed to initialize TrafficSignal: {e}")
-            print("  Continuing with examples (execution may fail)")
 
     # Run examples
     # Note: These will use deterministic planner by default unless LLM is configured

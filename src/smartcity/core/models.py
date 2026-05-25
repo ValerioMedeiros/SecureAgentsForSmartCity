@@ -24,6 +24,10 @@ class ApprovalMode(str, Enum):
     HUMAN = "human"
     DENY = "deny"
 
+class User(BaseModel):
+    username: str
+    token: str
+    permissions: List[ActionType] = Field(default_factory=list)
 
 class WeatherObserved(BaseModel):
     event_type: str = Field(default="combined")

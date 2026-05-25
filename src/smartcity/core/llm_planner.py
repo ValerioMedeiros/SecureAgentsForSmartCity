@@ -12,10 +12,8 @@ from langchain_core.prompts import PromptTemplate
 from langchain_openai import ChatOpenAI
 
 
-
-
 from ..infra.logging_utils import configure_logger
-from .models import ActionType, MonitorEvent, RiskLevel, validate_plan_dict # type: ignore  # noqa: F401
+from .models import ActionType, MonitorEvent, RiskLevel, validate_plan_dict  # type: ignore  # noqa: F401
 
 load_dotenv()
 
@@ -99,7 +97,10 @@ def _get_schema_example() -> str:
                 {
                     "id": "notify-owner",
                     "action": ActionType.NOTIFY_USER.value,
-                    "params": {"message": "Pumps adjusted due to heavy precipitation", "user_id": "maintenance-team"},
+                    "params": {
+                        "message": "Pumps adjusted due to heavy precipitation",
+                        "user_id": "maintenance-team",
+                    },
                 },
             ],
             "approval": {"autonomy_level": 2},
@@ -176,13 +177,6 @@ def generate_plan_with_llm(
     if not LLM_PLANNER_ENABLED:
         return None
 
-    if not LANGCHAIN_AVAILABLE:
-        logger.debug(
-            "LangChain not available; LLM planner disabled",
-            extra={"traceId": trace_id},
-        )
-        return None
-
     llm = _get_llm_client()
     if not llm:
         return None
@@ -193,13 +187,15 @@ def generate_plan_with_llm(
 
         available_actions = _get_available_actions_description()
         schema_example = _get_schema_example()
-        available_pumps = get_available_pumps()  # TODO - Implement this function to provide real pump status
+        available_pumps = (
+            get_available_pumps()
+        )  # TODO - Implement this function to provide real pump status
 
         prompt = PLAN_GENERATION_PROMPT.format(
             event_data=event_data,
             available_actions=available_actions,
             schema_example=schema_example,
-            available_pumps=available_pumps
+            available_pumps=available_pumps,
         )
 
         logger.debug(
