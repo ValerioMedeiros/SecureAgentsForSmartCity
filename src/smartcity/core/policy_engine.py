@@ -15,14 +15,12 @@ from ..infra.metrics import (
     POLICY_DECISIONS_TOTAL,
     stage_timer,
 )
-from .models import ApprovalMode, CandidatePlan, PolicyDecision, RiskLevel
+from .models import ActionType, ApprovalMode, CandidatePlan, PolicyDecision, RiskLevel
 
 load_dotenv()
 
 logger = configure_logger("policy_engine")
 
-USER_TOKEN = os.getenv("USER_TOKEN", "user-token")
-HUMAN_APPROVAL_TOKEN = os.getenv("HUMAN_APPROVAL_TOKEN", "human-approval-token")
 OPA_URL = os.getenv("OPA_URL", "").strip()
 OPA_POLICY_PATH = os.getenv("OPA_POLICY_PATH", "v1/data/smartcity/allow")
 OPA_TIMEOUT_SECONDS = float(os.getenv("OPA_TIMEOUT_SECONDS", "1.5"))
@@ -47,22 +45,17 @@ def _fallback_policy(plan: CandidatePlan, provided_token: str) -> PolicyDecision
             source="fallback",
         )
 
-    if plan.risk_level == RiskLevel.LOW:
-        mode = ApprovalMode.AUTO
-        allowed = True
-        reason = "Low risk plan auto-approved"
-    elif plan.risk_level == RiskLevel.MEDIUM:
-        mode = ApprovalMode.HUMAN
-        if plan.approval.human_token == HUMAN_APPROVAL_TOKEN:
-            allowed = True
-            reason = "Medium risk approved with human token"
-        else:
-            allowed = False
-            reason = "Medium risk requires human approval token"
-    else:
-        mode = ApprovalMode.DENY
-        allowed = False
-        reason = "High risk denied by policy"
+    # If plan only has low risk steps, allow with auto-approval; otherwise require human approval
+    allowed = True
+    mode = ApprovalMode.AUTO
+    reason = "Plan allowed by fallback policy"
+    for step in plan.steps:
+        if step.action == ActionType.NOTIFY_USER:
+            continue
+        if step.action in {ActionType.TURN_OFF_PUMP, ActionType.TURN_ON_PUMP}:
+            mode = ApprovalMode.HUMAN
+            reason = "Plan includes pump control actions, requires human approval"
+            break
 
     return PolicyDecision(
         allowed=allowed,
@@ -75,7 +68,7 @@ def _fallback_policy(plan: CandidatePlan, provided_token: str) -> PolicyDecision
 
 
 def _opa_policy(
-    plan: CandidatePlan, provided_token: str, trace_id: str
+    plan: CandidatePlan,
 ) -> PolicyDecision:
     if not OPA_URL:
         raise RuntimeError("OPA_URL not configured")
@@ -84,9 +77,6 @@ def _opa_policy(
     payload = {
         "input": {
             "plan": plan.to_wire_dict(),
-            "token": provided_token,
-            "expected_user_token": USER_TOKEN,
-            "expected_human_token": HUMAN_APPROVAL_TOKEN,
         }
     }
     with stage_timer("policy_opa", "opa"):

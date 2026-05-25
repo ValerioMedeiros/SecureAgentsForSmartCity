@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 
 from langchain_core.prompts import PromptTemplate
 from langchain_openai import ChatOpenAI
+from langchain.agents import create_agent
 
 
 from ..infra.logging_utils import configure_logger
@@ -21,7 +22,7 @@ logger = configure_logger("llm_planner")
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4-turbo")
-LLM_PLANNER_ENABLED = os.getenv("LLM_PLANNER_ENABLED", "false").lower() == "true"
+LLM_PLANNER_ENABLED = os.getenv("LLM_PLANNER_ENABLED", "true").lower() == "true"
 LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.3"))
 
 

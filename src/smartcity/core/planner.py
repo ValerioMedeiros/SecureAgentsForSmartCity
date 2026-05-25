@@ -245,7 +245,7 @@ def malformed_plan_fixture(trace_id: str) -> Dict[str, Any]:
             {
                 "id": "bad-step",
                 "action": "setPriorityCorridor",
-                "params": {"entity_id": TRAFFIC_SIGNAL_ID},
+                "params": {"entity_id": PUMP_ENTITY_ID},
             }
         ],
         "approval": {"autonomy_level": 3},
