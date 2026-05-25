@@ -11,6 +11,9 @@ class ActionType(str, Enum):
     GET_TRAFFIC_SIGNAL_STATE = "getTrafficSignalState"
     SET_PRIORITY_CORRIDOR = "setPriorityCorridor"
     NOTIFY_TRAFFIC_AGENTS = "notifyTrafficAgents"
+    GET_PUMP_STATUS = "getPumpStatus"
+    TURN_ON_PUMP = "turnOnPump"
+    TURN_OFF_PUMP = "turnOffPump"
 
 
 class RiskLevel(str, Enum):
@@ -33,6 +36,10 @@ class MonitorEvent(BaseModel):
     crowd_level: str = Field(default="normal")
     location: str = Field(default="Avenue 1")
     notes: Optional[str] = None
+    # Geo context — populated by monitor for WeatherObserved events
+    coordinates: Optional[tuple] = Field(default=None)           # (lon, lat)
+    coverage_radius_m: int = Field(default=300)                  # search radius for nearest pump
+    pump_id: Optional[str] = Field(default=None)                 # resolved via geo-query
 
 
 class PlanStep(BaseModel):
@@ -46,6 +53,9 @@ class PlanStep(BaseModel):
             ActionType.GET_TRAFFIC_SIGNAL_STATE: {"entity_id"},
             ActionType.SET_PRIORITY_CORRIDOR: {"entity_id", "value"},
             ActionType.NOTIFY_TRAFFIC_AGENTS: {"message"},
+            ActionType.GET_PUMP_STATUS: {"pump_id"},
+            ActionType.TURN_ON_PUMP: {"pump_id"},
+            ActionType.TURN_OFF_PUMP: {"pump_id"},
         }
         required_keys = required[self.action]
         missing = sorted(k for k in required_keys if k not in self.params)

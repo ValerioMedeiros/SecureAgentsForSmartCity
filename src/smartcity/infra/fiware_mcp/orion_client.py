@@ -86,11 +86,19 @@ class OrionClient:
         query: str = None,
         attrs: str = None,
         count: bool = False,
+        georel: str = None,
+        geometry: str = None,
+        coords: str = None,
     ) -> dict:
         """
-        Query entities from Orion.
+        Query entities from Orion with optional geo-filter.
 
         Returns {"entities": [...], "total": N} where total is only present when count=True.
+
+        Geo params follow NGSI-v2 spec:
+          georel:   'near;maxDistance:300' or 'coveredBy'
+          geometry: 'point', 'polygon', 'line'
+          coords:   'lat,lon' (e.g. '-5.7945,-35.2094')
         """
         params = {"limit": limit, "offset": offset}
         if entity_type:
@@ -103,6 +111,12 @@ class OrionClient:
             params["attrs"] = attrs
         if count:
             params["options"] = "count"
+        if georel:
+            params["georel"] = georel
+        if geometry:
+            params["geometry"] = geometry
+        if coords:
+            params["coords"] = coords
 
         url = f"{self.base_url}/v2/entities?{urllib.parse.urlencode(params)}"
         response = self._request("GET", url, headers=self._headers())

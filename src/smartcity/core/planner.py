@@ -86,6 +86,21 @@ def _build_rule_based_plan(event: MonitorEvent, trace_id: str) -> Dict[str, Any]
         },
     ]
 
+    # If a pump was resolved via geo-query, add pump actuation steps
+    if event.pump_id and (event.flood_risk or event.heavy_rain):
+        steps += [
+            {
+                "id": "check-pump",
+                "action": ActionType.GET_PUMP_STATUS.value,
+                "params": {"pump_id": event.pump_id},
+            },
+            {
+                "id": "activate-pump",
+                "action": ActionType.TURN_ON_PUMP.value,
+                "params": {"pump_id": event.pump_id},
+            },
+        ]
+
     return {
         "plan_id": str(uuid.uuid4()),
         "goal": goal,

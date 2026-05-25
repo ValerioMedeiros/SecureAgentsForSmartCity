@@ -36,5 +36,65 @@ services:
     volumes:
       - ./policies:/policies:ro
 
+  fiware-mcp:
+    build:
+      context: .
+      dockerfile: Dockerfile.fiware-mcp
+    container_name: smartcity-fiware-mcp
+    depends_on:
+      orion:
+        condition: service_started
+    ports:
+      - "8001:8001"
+    environment:
+      - ORION_BASE_URL=http://orion:1026
+      - ORION_FIWARE_SERVICE=openiot
+      - ORION_FIWARE_SERVICE_PATH=/
+    restart: unless-stopped
+
+  pump-mcp:
+    build:
+      context: .
+      dockerfile: Dockerfile.pump-mcp
+    container_name: smartcity-pump-mcp
+    ports:
+      - "8002:8002"
+    restart: unless-stopped
+
+  mcp-server:
+    build:
+      context: .
+      dockerfile: Dockerfile.mcp-server
+    container_name: smartcity-mcp-server
+    depends_on:
+      - fiware-mcp
+      - pump-mcp
+      - opa
+    ports:
+      - "8000:8000"
+    environment:
+      - FIWARE_MCP_URL=http://fiware-mcp:8001/mcp
+      - PUMP_MCP_URL=http://pump-mcp:8002/mcp
+      - OPA_URL=http://opa:8181
+    restart: unless-stopped
+
+  monitor:
+    build:
+      context: .
+      dockerfile: Dockerfile.monitor
+    container_name: smartcity-monitor
+    depends_on:
+      - mcp-server
+      - fiware-mcp
+      - pump-mcp
+    ports:
+      - "8010:8010"
+    environment:
+      - MONITOR_CALLBACK_URL=http://monitor:8010/monitor/notify
+      - FIWARE_MCP_URL=http://fiware-mcp:8001/mcp
+      - PUMP_MCP_URL=http://pump-mcp:8002/mcp
+      - MCP_SERVER_URL=http://mcp-server:8000/mcp
+    restart: unless-stopped
+
 volumes:
   mongo_data:

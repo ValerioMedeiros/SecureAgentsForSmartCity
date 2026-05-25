@@ -5,6 +5,7 @@ from fastapi import FastAPI, HTTPException, Request, Response
 from pydantic import BaseModel
 
 from ..infra.audit import record_event
+from ..infra.fiware_mcp_client import update_attribute
 from ..infra.logging_utils import configure_logger
 from ..infra.metrics import (
     ERRORS_TOTAL,
@@ -13,6 +14,7 @@ from ..infra.metrics import (
     stage_timer,
 )
 from ..infra.ngsi_client import get_traffic_signal, update_priority_corridor
+from ..infra.pump_mcp_client import get_pump_status, turn_on_pump, turn_off_pump
 
 app = FastAPI(title="MCP Server")
 logger = configure_logger("mcp_server")
@@ -52,10 +54,12 @@ async def handle_mcp(call: McpCall, request: Request):
         with stage_timer("mcp_call_server", "mcp_server") as timing:
             if call.method == "getTrafficSignalState":
                 result = get_traffic_signal(call.params["entity_id"], trace_id, token)
+
             elif call.method == "setPriorityCorridor":
                 result = update_priority_corridor(
                     call.params["entity_id"], call.params["value"], trace_id, token
                 )
+
             elif call.method == "notifyTrafficAgents":
                 logger.info(
                     "Notify traffic agents",
@@ -65,9 +69,35 @@ async def handle_mcp(call: McpCall, request: Request):
                     },
                 )
                 result = {"status": "notified"}
+
+            elif call.method == "getPumpStatus":
+                result = await get_pump_status(call.params["pump_id"])
+
+            elif call.method == "turnOnPump":
+                pump_id = call.params["pump_id"]
+                # 1. Actua no dispositivo físico via Pump MCP
+                result = await turn_on_pump(pump_id)
+                # 2. Atualiza o digital twin no Orion via FIWARE MCP
+                if result.get("success"):
+                    pump = result.get("pump", {})
+                    orion_id = pump_id.replace("Pump:", "PumpDevice:")
+                    await update_attribute(orion_id, "status", "on")
+                    await update_attribute(orion_id, "flow_rate_m3h", str(pump.get("flow_rate_m3h", 0)))
+
+            elif call.method == "turnOffPump":
+                pump_id = call.params["pump_id"]
+                # 1. Actua no dispositivo físico via Pump MCP
+                result = await turn_off_pump(pump_id)
+                # 2. Atualiza o digital twin no Orion via FIWARE MCP
+                if result.get("success"):
+                    orion_id = pump_id.replace("Pump:", "PumpDevice:")
+                    await update_attribute(orion_id, "status", "off")
+                    await update_attribute(orion_id, "flow_rate_m3h", "0.0")
+
             else:
                 status_label = "400"
                 raise HTTPException(status_code=400, detail="Unknown method")
+
     except HTTPException as http_exc:
         status_label = str(http_exc.status_code)
         MCP_CALLS_TOTAL.labels(method=call.method, status=status_label).inc()
