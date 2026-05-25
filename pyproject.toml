@@ -20,3 +20,4 @@ dependencies = [
 
 [project.scripts]
 fiware-mcp-server = "smartcity.infra.fiware_mcp.server:main"
+weather-mcp-server = "smartcity.infra.weather_mcp.server:main"
