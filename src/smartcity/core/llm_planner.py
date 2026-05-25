@@ -11,7 +11,9 @@ from dotenv import load_dotenv
 from langchain_core.prompts import PromptTemplate
 from langchain_openai import ChatOpenAI
 from langchain.agents import create_agent
-
+from langchain.agents.middleware import AgentMiddleware, AgentState, hook_config, PIIMiddleware
+from langgraph.runtime import Runtime
+from langchain.messages import AIMessage
 
 from ..infra.logging_utils import configure_logger
 from .models import ActionType, MonitorEvent, RiskLevel, validate_plan_dict  # type: ignore  # noqa: F401
@@ -110,8 +112,41 @@ def _get_schema_example() -> str:
         indent=2,
     )
 
+class SafetyGuardrailMiddleware(AgentMiddleware):
+    """Model-based guardrail: Use an LLM to evaluate response safety."""
 
-def _get_llm_client() -> Optional[ChatOpenAI]:
+    def __init__(self):
+        super().__init__()
+        self.safety_model = ChatOpenAI(
+            api_key=OPENAI_API_KEY,
+            model="gpt-4.1-nano",
+            temperature=LLM_TEMPERATURE,
+        )
+
+    @hook_config(can_jump_to=["end"])
+    def after_agent(self, state: AgentState, runtime: Runtime) -> dict[str, Any] | None:
+        # Get the final AI response
+        if not state["messages"]:
+            return None
+
+        last_message = state["messages"][-1]
+        if not isinstance(last_message, AIMessage):
+            return None
+
+        # Use a model to evaluate safety
+        safety_prompt = f"""Evaluate if this response is safe and appropriate.
+        Respond with only 'SAFE' or 'UNSAFE'.
+
+        Response: {last_message.content}"""
+
+        result = self.safety_model.invoke([{"role": "user", "content": safety_prompt}])
+
+        if "UNSAFE" in result.content:
+            last_message.content = "I cannot provide that response. Please rephrase your request."
+
+        return None
+
+def _get_llm_client():
     """Initialize LangChain ChatOpenAI client if API key is available."""
 
     if not OPENAI_API_KEY:
@@ -119,11 +154,21 @@ def _get_llm_client() -> Optional[ChatOpenAI]:
         return None
 
     try:
-        return ChatOpenAI(
-            api_key=OPENAI_API_KEY,
-            model=OPENAI_MODEL,
-            temperature=LLM_TEMPERATURE,
+        agent = create_agent(
+            model=ChatOpenAI(
+                api_key=OPENAI_API_KEY,
+                model=OPENAI_MODEL,
+                temperature=LLM_TEMPERATURE,
+            ),
+            tools=[],  # No external tools for now, but could be added here
+            middleware=[
+                PIIMiddleware(pii_type="token", detector=r"token", strategy="mask"),
+                SafetyGuardrailMiddleware()
+            ]
+            
         )
+
+        return agent
     except Exception as e:
         logger.error(
             "Failed to initialize ChatOpenAI client",
