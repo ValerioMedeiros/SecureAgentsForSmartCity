@@ -34,32 +34,25 @@ def _color_for_mode(mode: ApprovalMode) -> str:
     return "red"
 
 
-def _fallback_policy(plan: CandidatePlan, provided_token: str) -> PolicyDecision:
-    if provided_token != USER_TOKEN:
-        return PolicyDecision(
-            allowed=False,
-            risk_level=plan.risk_level,
-            approval_mode=ApprovalMode.DENY,
-            verdict_color="red",
-            reason="Invalid user token",
-            source="fallback",
-        )
-
+def _fallback_policy(plan: CandidatePlan) -> PolicyDecision:
     # If plan only has low risk steps, allow with auto-approval; otherwise require human approval
     allowed = True
     mode = ApprovalMode.AUTO
+    risk_level = RiskLevel.LOW
     reason = "Plan allowed by fallback policy"
     for step in plan.steps:
         if step.action == ActionType.NOTIFY_USER:
             continue
         if step.action in {ActionType.TURN_OFF_PUMP, ActionType.TURN_ON_PUMP}:
             mode = ApprovalMode.HUMAN
+            allowed = False
+            risk_level = RiskLevel.MEDIUM
             reason = "Plan includes pump control actions, requires human approval"
             break
 
     return PolicyDecision(
         allowed=allowed,
-        risk_level=plan.risk_level,
+        risk_level=risk_level,
         approval_mode=mode,
         verdict_color=_color_for_mode(mode),
         reason=reason,
