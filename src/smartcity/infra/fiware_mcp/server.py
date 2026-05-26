@@ -66,9 +66,12 @@ def get_entities(
     query: Optional[str] = None,
     attrs: Optional[str] = None,
     count: bool = False,
+    georel: Optional[str] = None,
+    geometry: Optional[str] = None,
+    coords: Optional[str] = None,
 ) -> dict:
     """
-    Query entities from Orion.
+    Query entities from Orion, with optional geo-filter support.
 
     Returns {"entities": [...]} or {"entities": [...], "total": N} when count=True.
 
@@ -77,9 +80,12 @@ def get_entities(
         id_pattern: Regex to match entity IDs (e.g. 'WeatherStation:.*').
         limit: Max results per page (default 20, max 1000).
         offset: Number of results to skip for pagination (default 0).
-        query: NGSI simple query string (e.g. 'precipitation>50', 'temperature<10;humidity>80').
+        query: NGSI simple query string (e.g. 'precipitation>50', 'status==off').
         attrs: Comma-separated attributes to return (e.g. 'precipitation,humidity').
         count: If True, include total count in response header (Fiware-Total-Count).
+        georel: Geo relation (e.g. 'near;maxDistance:300', 'coveredBy').
+        geometry: Geometry type ('point', 'polygon', 'line').
+        coords: Coordinates in 'lat,lon' order (e.g. '-5.7945,-35.2094').
     """
     try:
         return _client.get_entities(
@@ -90,6 +96,9 @@ def get_entities(
             query=query,
             attrs=attrs,
             count=count,
+            georel=georel,
+            geometry=geometry,
+            coords=coords,
         )
     except Exception as e:
         return {"error": _orion_error(e)}

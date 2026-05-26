@@ -1,8 +1,9 @@
 """
 Initialise WeatherStation entities and register Orion subscriptions.
 
-Creates one or more WeatherStation entities in Orion and subscribes to
-threshold-based conditions that trigger the monitor webhook.
+Creates WeatherStation entities (type: WeatherObserved) with geo:json location
+and a coverage_radius_m attribute that defines each station's zone of influence.
+The monitor uses this radius to find the nearest PumpDevice via geo-query.
 
 Usage:
     python -m smartcity.app.init_weather_station
@@ -25,19 +26,36 @@ MONITOR_CALLBACK_URL = os.getenv(
     "MONITOR_CALLBACK_URL", "http://localhost:8010/monitor/notify"
 )
 
-# Initial state — all readings at safe baseline values
+# Coordinates: GeoJSON uses [longitude, latitude]
+# Simulated locations near Natal/RN — adjust to your actual deployment area
 WEATHER_STATIONS = [
     {
         "id": "WeatherStation:001",
         "type": "WeatherObserved",
-        "precipitation": 0.0,       # mm — alert threshold: > 0.50
-        "humidity": 60.0,           # %  — alert threshold: > 80
+        "precipitation": 0.0,           # mm  — alert threshold: > 0.50
+        "humidity": 60.0,               # %   — alert threshold: > 80
         "atmosphericPressure": 1013.0,  # hPa — alert threshold: < 1005
-        "location": "Avenue 1",
+        "coverage_radius_m": 300,       # meters — pump search radius
+        "location": {
+            "type": "Point",
+            "coordinates": [-35.2094, -5.7945],  # [lon, lat] — Lagoa Norte
+        },
+    },
+    {
+        "id": "WeatherStation:002",
+        "type": "WeatherObserved",
+        "precipitation": 0.0,
+        "humidity": 60.0,
+        "atmosphericPressure": 1013.0,
+        "coverage_radius_m": 300,
+        "location": {
+            "type": "Point",
+            "coordinates": [-35.2180, -5.8020],  # [lon, lat] — Lagoa Sul
+        },
     },
 ]
 
-# Subscriptions: one per threshold condition, all pointing to the monitor webhook
+# Subscriptions trigger on any WeatherStation crossing a threshold
 SUBSCRIPTIONS = [
     {
         "description": "WeatherStation - Precipitation above 0.50mm",
@@ -50,7 +68,7 @@ SUBSCRIPTIONS = [
         },
         "notification": {
             "http": {"url": MONITOR_CALLBACK_URL},
-            "attrs": ["precipitation", "humidity", "atmosphericPressure", "location"],
+            "attrs": ["precipitation", "humidity", "atmosphericPressure", "location", "coverage_radius_m"],
         },
         "throttling": 5,
     },
@@ -65,7 +83,7 @@ SUBSCRIPTIONS = [
         },
         "notification": {
             "http": {"url": MONITOR_CALLBACK_URL},
-            "attrs": ["precipitation", "humidity", "atmosphericPressure", "location"],
+            "attrs": ["precipitation", "humidity", "atmosphericPressure", "location", "coverage_radius_m"],
         },
         "throttling": 5,
     },
@@ -80,7 +98,7 @@ SUBSCRIPTIONS = [
         },
         "notification": {
             "http": {"url": MONITOR_CALLBACK_URL},
-            "attrs": ["precipitation", "humidity", "atmosphericPressure", "location"],
+            "attrs": ["precipitation", "humidity", "atmosphericPressure", "location", "coverage_radius_m"],
         },
         "throttling": 5,
     },
@@ -90,20 +108,26 @@ SUBSCRIPTIONS = [
 async def _init() -> None:
     trace_id = str(uuid.uuid4())
 
-    # Create entities
     for station in WEATHER_STATIONS:
         result = await upsert_entity(station)
         logger.info(
             "WeatherStation initialised",
-            extra={"traceId": trace_id, "extra_fields": {"id": station["id"], "result": result}},
+            extra={"traceId": trace_id, "extra_fields": {
+                "id": station["id"],
+                "coordinates": station["location"]["coordinates"],
+                "coverage_radius_m": station["coverage_radius_m"],
+                "result": result,
+            }},
         )
 
-    # Register subscriptions
     for sub in SUBSCRIPTIONS:
         result = await create_subscription(sub)
         logger.info(
             "Subscription registered",
-            extra={"traceId": trace_id, "extra_fields": {"description": sub["description"], "result": result}},
+            extra={"traceId": trace_id, "extra_fields": {
+                "description": sub["description"],
+                "result": result,
+            }},
         )
 
 

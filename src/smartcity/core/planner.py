@@ -90,62 +90,18 @@ def _build_rule_based_plan(event: MonitorEvent, trace_id: str) -> Dict[str, Any]
         }
     ]
 
-    # Pump failure handling
-    if "pump" in et:
-        scenario = "pump-failure"
-        goal = "Isolate and mitigate pump failure"
-        message = "Pump failure detected; taking protective actions"
-        steps = [
+    # If a pump was resolved via geo-query, add pump actuation steps
+    if event.pump_id and (event.flood_risk or event.heavy_rain):
+        steps += [
             {
-                "id": "turn-off-pump",
-                "action": ActionType.TURN_OFF_PUMP.value,
-                "params": {"entity_id": PUMP_ENTITY_ID},
+                "id": "check-pump",
+                "action": ActionType.GET_PUMP_STATUS.value,
+                "params": {"pump_id": event.pump_id},
             },
             {
-                "id": "notify-ops",
-                "action": ActionType.NOTIFY_USER.value,
-                "params": {"message": message, "user_id": "maintenance-team"},
-            },
-        ]
-
-    # Flood response: ensure pumps are running to mitigate flooding
-    if "flood" in et:
-        scenario = "flood-response"
-        goal = "Activate pumps to mitigate flood risk"
-        message = "Flood risk detected; activating pumps"
-        steps = [
-            {
-                "id": "turn-on-pump",
+                "id": "activate-pump",
                 "action": ActionType.TURN_ON_PUMP.value,
-                "params": {"entity_id": PUMP_ENTITY_ID},
-            },
-            {
-                "id": "notify-ops",
-                "action": ActionType.NOTIFY_USER.value,
-                "params": {"message": message, "user_id": "maintenance-team"},
-            },
-        ]
-
-    # Combined pump + flood -> prioritize safety and human approval
-    if "pump" in et and "flood" in et:
-        scenario = "combined-pump-flood"
-        goal = "Coordinate pump operations under flood conditions"
-        message = "Pump fault during flood; follow combined mitigation protocol"
-        steps = [
-            {
-                "id": "turn-off-faulty-pump",
-                "action": ActionType.TURN_OFF_PUMP.value,
-                "params": {"entity_id": PUMP_ENTITY_ID},
-            },
-            {
-                "id": "turn-on-backup",
-                "action": ActionType.TURN_ON_PUMP.value,
-                "params": {"entity_id": PUMP_ENTITY_ID},
-            },
-            {
-                "id": "notify-ops",
-                "action": ActionType.NOTIFY_USER.value,
-                "params": {"message": message, "user_id": "maintenance-team"},
+                "params": {"pump_id": event.pump_id},
             },
         ]
 
