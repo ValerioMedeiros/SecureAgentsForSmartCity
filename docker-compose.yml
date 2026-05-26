@@ -20,7 +20,13 @@ services:
         condition: service_healthy
     ports:
       - "1026:1026"
-    command: -dbhost mongo -logLevel DEBUG
+    entrypoint: ["/bin/sh", "-c", "rm -f /tmp/contextBroker.pid && exec /usr/bin/contextBroker -dbhost mongo -logLevel DEBUG -fg"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:1026/version"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
 
   opa:
     image: openpolicyagent/opa:0.68.0

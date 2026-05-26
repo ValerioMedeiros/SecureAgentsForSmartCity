@@ -33,16 +33,16 @@ mcp = FastMCP(
 # Em produção, isso seria substituído por chamadas a um broker MQTT ou API real.
 
 _pumps: Dict[str, Dict[str, Any]] = {
-    "Pump:001": {
-        "id": "Pump:001",
+    "PumpDevice:001": {
+        "id": "PumpDevice:001",
         "location": "Lagoa de Captação Norte",
         "status": "off",
         "flow_rate_m3h": 0.0,
         "max_flow_rate_m3h": 120.0,
         "last_updated": None,
     },
-    "Pump:002": {
-        "id": "Pump:002",
+    "PumpDevice:002": {
+        "id": "PumpDevice:002",
         "location": "Lagoa de Captação Sul",
         "status": "off",
         "flow_rate_m3h": 0.0,
@@ -184,7 +184,7 @@ def main():
     transport = sys.argv[1] if len(sys.argv) > 1 else "http"
     port = int(sys.argv[2]) if len(sys.argv) > 2 else 8002
     if transport == "http":
-        mcp.run(transport="http", port=port, host="0.0.0.0")
+        mcp.run(transport="streamable-http", port=port, host="0.0.0.0")
     else:
         mcp.run(transport=transport)
 
