@@ -28,7 +28,7 @@ Research-oriented proof-of-concept implementing a minimal and explainable MAPE-K
 - Entry point: `src/smartcity/core/policy_engine.py`.
 
 ### Execute
-- Executes approved plan steps through MCP tools.
+- Executes approved plan steps through the Pump MCP server.
 - Entry point: `src/smartcity/core/executor.py`.
 
 ### Knowledge/Audit
@@ -38,7 +38,7 @@ Research-oriented proof-of-concept implementing a minimal and explainable MAPE-K
 
 ### Observability
 
-- Prometheus metrics exposed at `GET /metrics` on the monitor service (port 8010) and the MCP server (port 8000).
+- Prometheus metrics exposed at `GET /metrics` on the monitor service (port 8010).
 - Metrics include: `smartcity_plans_total`, `smartcity_policy_decisions_total`, `smartcity_executions_total`, `smartcity_mcp_calls_total`, `smartcity_errors_total`, and `smartcity_stage_duration_seconds` (histogram per stage/component for the `monitor`, `plan`, `policy`, `policy_opa`, `execute`, `mcp_call_server`, and `mcp_call_client` stages).
 - Audit query endpoints on the monitor service:
   - `GET /audit/entries?trace_id=&plan_id=&component=&event_type=&limit=`
@@ -58,7 +58,8 @@ Root-level Python files are kept as compatibility wrappers, so existing commands
 - `src/smartcity/core/executor.py` - policy-gated execution
 - `src/smartcity/infra/logging_utils.py` - JSON logging utilities
 - `src/smartcity/infra/ngsi_client.py` - NGSI-v2 entity and subscription helpers
-- `src/smartcity/services/mcp_server.py` - MCP API surface
+- `src/smartcity/infra/pump_mcp/server.py` - Pump MCP server
+- `src/smartcity/infra/pump_mcp_client.py` - Pump MCP client helpers
 - `src/smartcity/services/monitor.py` - monitor endpoint and event loop trigger
 - `src/smartcity/app/examples_llm_planner.py` - interactive planner examples (with optional execution)
 - `src/smartcity/app/host_simulator.py` - scenario runner (alternative, parametrized by SCENARIO env var)
@@ -95,9 +96,9 @@ cp .env.example .env
 
 ### 4) Run core flow (minimal)
 
-Terminal 1 (MCP server):
+Terminal 1 (Pump MCP server):
 ```bash
-uv run uvicorn src.smartcity.services.mcp_server:app --host 0.0.0.0 --port 8000
+uv run pump-mcp-server http 8002
 ```
 
 Terminal 2 (Planner examples with execution):
@@ -129,7 +130,7 @@ uv run -m src.smartcity.app.experiments
 
 ### Option 1: Interactive Examples with Plan Execution
 
-The `examples_llm_planner.py` script demonstrates 4 planning scenarios and can optionally execute them:
+The `examples_llm_planner.py` script demonstrates 4 planning scenarios, prints the generated plan JSON, and can optionally execute them:
 
 ```bash
 # Generate plans only (no execution)
@@ -159,7 +160,7 @@ This is useful for:
 - Scripting scenario-based experiments
 - Integration with monitoring and log aggregation
 
-**Note:** Both scripts require the MCP server running on port 8000.
+**Note:** Both scripts require the Pump MCP server running on port 8002.
 
 **Note:** Root files are compatibility wrappers. Prefer `python -m src.smartcity...` and `uvicorn src.smartcity...` commands to avoid path/cwd issues.
 
