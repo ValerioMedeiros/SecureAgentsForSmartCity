@@ -26,38 +26,49 @@ logger = configure_logger("planner")
 PUMP_ENTITY_ID = os.getenv("PUMP_ENTITY_ID", "PumpStation:001")
 
 
+_FORECAST_RISK_MAP: dict[str, RiskLevel] = {
+    "crítico": RiskLevel.HIGH,
+    "alto": RiskLevel.HIGH,
+    "médio": RiskLevel.MEDIUM,
+    "baixo": RiskLevel.LOW,
+}
+
+_RISK_RANK: dict[RiskLevel, int] = {
+    RiskLevel.LOW: 0,
+    RiskLevel.MEDIUM: 1,
+    RiskLevel.HIGH: 2,
+}
+
+
+def _escalate(current: RiskLevel, candidate: RiskLevel) -> RiskLevel:
+    return candidate if _RISK_RANK[candidate] > _RISK_RANK[current] else current
+
+
 def _risk_from_event(event: MonitorEvent) -> RiskLevel:
-    # Determine risk from event_type and weather observations
     et = (event.event_type or "").lower()
 
-    # If event explicitly mentions flood, treat as high risk
     if "flood" in et:
         return RiskLevel.HIGH
 
-    # If event mentions pump failure together with weather observations indicating
-    # heavy precipitation, escalate to HIGH
-    if "pump" in et:
-        # default pump issues -> medium risk
-        risk = RiskLevel.MEDIUM
-        observations = event.weather_observations or []
-        for obs in observations:
-            try:
-                if getattr(obs, "precipitation", 0) and float(obs.precipitation) > 50:
-                    return RiskLevel.HIGH
-            except Exception:
-                continue
-        return risk
+    risk = RiskLevel.MEDIUM if "pump" in et else RiskLevel.LOW
 
-    # Inspect weather observations for heavy rain
-    observations = event.weather_observations or []
-    for obs in observations:
+    for obs in (event.weather_observations or []):
+        # Forecast-based risk takes priority when available
+        forecast_risk = _FORECAST_RISK_MAP.get(getattr(obs, "rainfall_risk", None) or "")
+        if forecast_risk:
+            risk = _escalate(risk, forecast_risk)
+
+        # Fallback: current precipitation thresholds
         try:
-            if getattr(obs, "precipitation", 0) and float(obs.precipitation) > 30:
-                return RiskLevel.MEDIUM
+            precip = float(getattr(obs, "precipitation", 0) or 0)
+            if precip > 50:
+                risk = _escalate(risk, RiskLevel.HIGH)
+            elif precip > 30:
+                risk = _escalate(risk, RiskLevel.MEDIUM)
         except Exception:
             continue
 
-    return RiskLevel.LOW
+    return risk
 
 
 def _approval_level(risk_level: RiskLevel) -> int:

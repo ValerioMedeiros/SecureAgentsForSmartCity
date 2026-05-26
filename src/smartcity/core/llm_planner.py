@@ -33,12 +33,15 @@ _PII_PATTERNS = [
 ]
 
 PLAN_GENERATION_PROMPT = PromptTemplate(
-    input_variables=["event_data", "available_actions", "available_pumps", "schema_example"],
+    input_variables=["event_data", "available_actions", "available_pumps", "schema_example", "weather_forecast"],
     template="""You are an intelligent pump management planner for a smart city system.
 Your task is to generate a pump management plan in response to a monitoring event.
 
 ## Event Data
 {event_data}
+
+## Weather Forecast (próximas horas)
+{weather_forecast}
 
 ## Available Actions
 {available_actions}
@@ -50,14 +53,15 @@ Your task is to generate a pump management plan in response to a monitoring even
 {schema_example}
 
 ## Instructions
-1. Analyze the event and determine the appropriate response
+1. Analyze the event and the weather forecast to determine the appropriate response
 2. Generate a sequence of actionable steps
 3. Return ONLY valid JSON matching the schema above
-4. Set risk_level based on event severity:
-   - LOW: normal conditions, light rain
-   - MEDIUM: heavy rain, moderate wind
-   - HIGH: flood risk, heavy winds
-5. Use realistic goal and scenario descriptions based on the event context
+4. Set risk_level based on event severity AND forecast:
+   - LOW: normal conditions, light rain, forecast risco=baixo
+   - MEDIUM: heavy rain, moderate wind, forecast risco=médio
+   - HIGH: flood risk, heavy winds, forecast risco=alto or crítico
+5. If forecast indicates alto or crítico risk, activate pumps preventively even if current precipitation is low
+6. Use realistic goal and scenario descriptions based on the event context
 
 ## Output
 Return ONLY the JSON plan, no explanation or markdown:
@@ -83,6 +87,19 @@ def _mask_pii(text: str) -> str:
     for pattern, replacement in _PII_PATTERNS:
         text = pattern.sub(replacement, text)
     return text
+
+
+def _build_forecast_context(event: MonitorEvent) -> str:
+    """Serializes weather forecast fields from observations into a readable string for the LLM."""
+    lines = []
+    for obs in (event.weather_observations or []):
+        if obs.rainfall_risk or obs.forecast_precipitation_mm is not None:
+            lines.append(
+                f"- Estação {obs.station_id}: risco={obs.rainfall_risk or 'desconhecido'}, "
+                f"precipitação prevista={obs.forecast_precipitation_mm or 0:.1f}mm "
+                f"nas próximas {obs.forecast_hours or 6}h"
+            )
+    return "\n".join(lines) if lines else "Dados de previsão não disponíveis."
 
 
 def _get_available_actions_description() -> str:
@@ -225,6 +242,7 @@ def generate_plan_with_llm(
             available_actions=_get_available_actions_description(),
             available_pumps="Pump:001, Pump:002",
             schema_example=_get_schema_example(),
+            weather_forecast=_build_forecast_context(event),
         )
 
         logger.debug(

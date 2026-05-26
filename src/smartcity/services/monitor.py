@@ -14,6 +14,7 @@ from ..infra.logging_utils import configure_logger
 from ..infra.metrics import render_latest, stage_timer
 from ..infra.ngsi_client import create_subscription
 from ..infra.pump_mcp_client import get_nearest_pump
+from ..infra.weather_mcp_client import get_rainfall_risk as weather_rainfall_risk
 
 logger = configure_logger("monitor")
 app = FastAPI(title="Monitor Service")
@@ -81,33 +82,67 @@ async def handle_notification(payload: Dict[str, Any] = Body(...)) -> Dict[str, 
     with stage_timer("monitor", "monitor") as timing:
         event = _notification_to_event(payload)
 
-        # Resolve nearest pump via geo-query for each weather observation
+        # Enrich observations with forecast data and resolve nearest pump
         resolved_observations = []
         for obs in (event.weather_observations or []):
-            if obs.coordinates and obs.precipitation > 0.50:
+            if obs.coordinates:
                 lon, lat = obs.coordinates
-                pump_entity = await get_nearest_pump(lon, lat, obs.coverage_radius_m)
-                if pump_entity:
-                    pump_id = pump_entity.get("id", "").replace("PumpDevice:", "Pump:")
-                    obs = obs.model_copy(update={"pump_id": pump_id})
+
+                # Fetch rainfall risk forecast from Weather MCP
+                try:
+                    forecast = await weather_rainfall_risk(lat, lon, hours=6)
+                    flood_risk = forecast.get("flood_risk") if isinstance(forecast, dict) else None
+                    total_precip = forecast.get("total_precipitation_mm") if isinstance(forecast, dict) else None
+                    obs = obs.model_copy(update={
+                        "rainfall_risk": flood_risk,
+                        "forecast_precipitation_mm": total_precip,
+                        "forecast_hours": 6,
+                    })
                     logger.info(
-                        "Nearest pump resolved via geo-query",
+                        "Weather forecast enriched observation",
                         extra={"traceId": trace_id, "extra_fields": {
                             "station_id": obs.station_id,
-                            "pump_id": pump_id,
-                            "radius_m": obs.coverage_radius_m,
-                            "coordinates": obs.coordinates,
+                            "flood_risk": flood_risk,
+                            "forecast_precipitation_mm": total_precip,
                         }},
                     )
-                else:
+                except Exception as exc:
                     logger.warning(
-                        "No available pump found within radius",
+                        "Weather MCP forecast unavailable, continuing without forecast",
                         extra={"traceId": trace_id, "extra_fields": {
                             "station_id": obs.station_id,
-                            "radius_m": obs.coverage_radius_m,
-                            "coordinates": obs.coordinates,
+                            "error": str(exc),
                         }},
                     )
+
+                # Resolve nearest pump when current precipitation or forecast warrants it
+                should_resolve_pump = (
+                    obs.precipitation > 0.50
+                    or obs.rainfall_risk in ("alto", "crítico")
+                )
+                if should_resolve_pump:
+                    pump_entity = await get_nearest_pump(lon, lat, obs.coverage_radius_m)
+                    if pump_entity:
+                        pump_id = pump_entity.get("id", "").replace("PumpDevice:", "Pump:")
+                        obs = obs.model_copy(update={"pump_id": pump_id})
+                        logger.info(
+                            "Nearest pump resolved via geo-query",
+                            extra={"traceId": trace_id, "extra_fields": {
+                                "station_id": obs.station_id,
+                                "pump_id": pump_id,
+                                "radius_m": obs.coverage_radius_m,
+                                "coordinates": obs.coordinates,
+                            }},
+                        )
+                    else:
+                        logger.warning(
+                            "No available pump found within radius",
+                            extra={"traceId": trace_id, "extra_fields": {
+                                "station_id": obs.station_id,
+                                "radius_m": obs.coverage_radius_m,
+                                "coordinates": obs.coordinates,
+                            }},
+                        )
             resolved_observations.append(obs)
 
         if resolved_observations:

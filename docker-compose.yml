@@ -61,6 +61,15 @@ services:
       - "8002:8002"
     restart: unless-stopped
 
+  weather-mcp:
+    build:
+      context: .
+      dockerfile: Dockerfile.weather-mcp
+    container_name: smartcity-weather-mcp
+    ports:
+      - "8003:8003"
+    restart: unless-stopped
+
   monitor:
     build:
       context: .
@@ -69,12 +78,14 @@ services:
     depends_on:
       - fiware-mcp
       - pump-mcp
+      - weather-mcp
     ports:
       - "8010:8010"
     environment:
       - MONITOR_CALLBACK_URL=http://monitor:8010/monitor/notify
       - FIWARE_MCP_URL=http://fiware-mcp:8001/mcp
       - PUMP_MCP_URL=http://pump-mcp:8002/mcp
+      - WEATHER_MCP_URL=http://weather-mcp:8003/mcp
     restart: unless-stopped
 
 volumes:

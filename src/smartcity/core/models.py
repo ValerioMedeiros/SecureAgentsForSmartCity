@@ -43,6 +43,10 @@ class WeatherObserved(BaseModel):
     coverage_radius_m: int = Field(default=300)                  # search radius for nearest pump
     pump_id: Optional[str] = Field(default=None)                 # resolved via geo-query
     timestamp: Optional[str] = None
+    # Weather forecast context — populated by monitor via Weather MCP
+    rainfall_risk: Optional[str] = Field(default=None)           # "baixo" | "médio" | "alto" | "crítico"
+    forecast_precipitation_mm: Optional[float] = Field(default=None)
+    forecast_hours: Optional[int] = Field(default=None)
 
 class MonitorEvent(BaseModel):
     """
