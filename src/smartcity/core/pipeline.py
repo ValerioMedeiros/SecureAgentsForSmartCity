@@ -1,15 +1,17 @@
 from __future__ import annotations
 
+import asyncio
 import os
+import threading
 import uuid
 from typing import Any, Dict, Optional
 
-import requests
 from dotenv import load_dotenv
 
 from ..infra.audit import record_event
 from ..infra.logging_utils import configure_logger
 from ..infra.metrics import ERRORS_TOTAL, EXECUTIONS_TOTAL, stage_timer
+from ..infra.pump_mcp_client import turn_off_pump, turn_on_pump
 from .models import (
     CandidatePlan,
     ExecutionReport,
@@ -25,8 +27,6 @@ from .security import security_manager
 load_dotenv()
 
 logger = configure_logger("pipeline")
-
-MCP_SERVER_URL = os.getenv("MCP_SERVER_URL", "http://localhost:8000/mcp")
 
 
 def _coerce_event(event: MonitorEvent | Dict[str, Any]) -> MonitorEvent:
@@ -71,8 +71,57 @@ def _request_authorized_token(
     )
 
 
+def _run_async(coro):
+    """Run async Pump MCP client calls from both sync and async contexts."""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+
+    result: dict[str, Any] = {}
+    error: dict[str, Exception] = {}
+
+    def _runner() -> None:
+        try:
+            result["value"] = asyncio.run(coro)
+        except Exception as exc:  # pragma: no cover - defensive guard
+            error["exc"] = exc
+
+    thread = threading.Thread(target=_runner, daemon=True)
+    thread.start()
+    thread.join()
+
+    if "exc" in error:
+        raise error["exc"]
+    return result.get("value")
+
+
+def _extract_pump_id(params: Dict[str, Any]) -> str:
+    return str(params.get("pump_id") or params.get("entity_id") or "Pump:001")
+
+
+def _invoke_step(action: str, params: Dict[str, Any]) -> tuple[int, str]:
+    if action == "turnOnPump":
+        pump_id = _extract_pump_id(params)
+        payload = _run_async(turn_on_pump(pump_id))
+        ok = bool(payload.get("success", False))
+        return (200 if ok else 409, str(payload))
+
+    if action == "turnOffPump":
+        pump_id = _extract_pump_id(params)
+        payload = _run_async(turn_off_pump(pump_id))
+        ok = bool(payload.get("success", False))
+        return (200 if ok else 409, str(payload))
+
+    if action == "notifyUser":
+        return (200, "notification accepted")
+
+    raise ValueError(f"Unsupported action for Pump MCP execution: {action}")
+
+
 def _execute_plan(
-    plan: CandidatePlan, decision: PolicyDecision,
+    plan: CandidatePlan,
+    decision: PolicyDecision,
 ) -> ExecutionReport:
     trace_id = plan.telemetry.trace_id
     results: list[StepResult] = []
@@ -80,16 +129,9 @@ def _execute_plan(
 
     with stage_timer("execute", "pipeline") as exec_timing:
         for step in plan.steps:
-            call_payload = {
-                "method": step.action.value,
-                "params": step.params,
-                "traceId": trace_id,
-            }
             with stage_timer("mcp_call_client", "pipeline") as step_timing:
                 try:
-                    response = requests.post(
-                        MCP_SERVER_URL, json=call_payload, timeout=10
-                    )
+                    status_code, body = _invoke_step(step.action.value, step.params)
                 except Exception:
                     ERRORS_TOTAL.labels(component="pipeline", kind="mcp_call").inc()
                     record_event(
@@ -108,12 +150,11 @@ def _execute_plan(
                     execute_status = "error"
                     raise
 
-            body = response.text
             results.append(
                 StepResult(
                     step_id=step.id,
                     action=step.action,
-                    status_code=response.status_code,
+                    status_code=status_code,
                     response_body=body,
                 )
             )
@@ -124,7 +165,7 @@ def _execute_plan(
                     "extra_fields": {
                         "step": step.id,
                         "action": step.action.value,
-                        "status": response.status_code,
+                        "status": status_code,
                         "duration_ms": step_timing["duration_ms"],
                     },
                 },
@@ -135,17 +176,20 @@ def _execute_plan(
                 trace_id=trace_id,
                 plan_id=plan.plan_id,
                 actor="pipeline",
-                outcome="ok" if response.ok else "http_error",
+                outcome="ok" if status_code < 400 else "http_error",
                 payload={
                     "step": step.id,
                     "action": step.action.value,
                     "params": step.params,
-                    "status_code": response.status_code,
+                    "status_code": status_code,
                     "duration_ms": step_timing["duration_ms"],
                     "response_snippet": body[:512],
                 },
             )
-            response.raise_for_status()
+            if status_code >= 400:
+                raise RuntimeError(
+                    f"Step '{step.id}' failed with status {status_code}: {body}"
+                )
 
     EXECUTIONS_TOTAL.labels(status=execute_status).inc()
     record_event(

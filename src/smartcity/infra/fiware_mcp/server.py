@@ -46,6 +46,7 @@ def _orion_error(e: Exception) -> str:
 
 # ── Health ────────────────────────────────────────────────────────────
 
+
 @mcp.tool()
 def get_orion_version() -> dict:
     """Return FIWARE Orion version and confirm the broker is reachable."""
@@ -56,6 +57,7 @@ def get_orion_version() -> dict:
 
 
 # ── Read ──────────────────────────────────────────────────────────────
+
 
 @mcp.tool()
 def get_entities(
@@ -105,7 +107,9 @@ def get_entities(
 
 
 @mcp.tool()
-def get_entity(entity_id: str, entity_type: Optional[str] = None, key_values: bool = True) -> dict:
+def get_entity(
+    entity_id: str, entity_type: Optional[str] = None, key_values: bool = True
+) -> dict:
     """
     Retrieve a single entity by ID.
 
@@ -115,12 +119,15 @@ def get_entity(entity_id: str, entity_type: Optional[str] = None, key_values: bo
         key_values: Return simplified key-value format instead of full NGSI (default True).
     """
     try:
-        return _client.get_entity(entity_id, entity_type=entity_type, key_values=key_values)
+        return _client.get_entity(
+            entity_id, entity_type=entity_type, key_values=key_values
+        )
     except Exception as e:
         return {"error": _orion_error(e)}
 
 
 # ── Write ─────────────────────────────────────────────────────────────
+
 
 @mcp.tool()
 def create_entity(entity_json: str) -> str:
@@ -203,6 +210,7 @@ def delete_entity(entity_id: str, entity_type: Optional[str] = None) -> str:
 
 # ── Subscriptions ─────────────────────────────────────────────────────
 
+
 @mcp.tool()
 def list_subscriptions(limit: int = 20, offset: int = 0) -> dict:
     """
@@ -257,6 +265,7 @@ def delete_subscription(subscription_id: str) -> str:
 
 # ── Resources (read-only context) ─────────────────────────────────────
 
+
 @mcp.resource("orion://entities/{entity_id}")
 def entity_resource(entity_id: str) -> str:
     """Estado atual de uma entidade Orion como contexto somente leitura."""
@@ -289,11 +298,12 @@ def orion_status_resource() -> str:
 
 # ── Entrypoint ────────────────────────────────────────────────────────
 
+
 def main():
     transport = sys.argv[1] if len(sys.argv) > 1 else "http"
     port = int(sys.argv[2]) if len(sys.argv) > 2 else 8001
     if transport == "http":
-        mcp.run(transport="http", port=port)
+        mcp.run(transport="http", host="0.0.0.0", port=port)
     else:
         mcp.run(transport=transport)
 

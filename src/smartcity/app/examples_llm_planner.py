@@ -13,9 +13,8 @@ import uuid
 
 from dotenv import load_dotenv
 
-from ..core.executor import execute_candidate_plan
 from ..core.models import MonitorEvent, WeatherObserved
-from ..core.planner import build_candidate_plan
+from ..core.pipeline import pipeline
 from ..infra.logging_utils import configure_logger
 
 # Load environment variables
@@ -28,32 +27,62 @@ EXECUTE_PLANS = os.getenv("EXECUTE_PLANS", "false").lower() == "true"
 
 def _print_plan_details(plan, title: str = "Plan Details"):
     """Print detailed plan information."""
+    if isinstance(plan, dict):
+        plan_id = plan.get("plan_id")
+        goal = plan.get("goal")
+        scenario = plan.get("scenario")
+        risk_level = plan.get("risk_level")
+        approval = plan.get("approval", {})
+        steps = plan.get("steps", [])
+        autonomy_level = approval.get("autonomy_level")
+    else:
+        plan_id = plan.plan_id
+        goal = plan.goal
+        scenario = plan.scenario
+        risk_level = plan.risk_level.value
+        autonomy_level = plan.approval.autonomy_level
+        steps = plan.steps
+
     print(f"\n{title}:")
-    print(f"  Plan ID: {plan.plan_id}")
-    print(f"  Goal: {plan.goal}")
-    print(f"  Scenario: {plan.scenario}")
-    print(f"  Risk Level: {plan.risk_level.value}")
-    print(f"  Autonomy Level: {plan.approval.autonomy_level}")
-    print(f"  Steps: {len(plan.steps)}")
-    for i, step in enumerate(plan.steps, 1):
-        print(f"    {i}. {step.action.value} ({step.id})")
+    print(f"  Plan ID: {plan_id}")
+    print(f"  Goal: {goal}")
+    print(f"  Scenario: {scenario}")
+    print(f"  Risk Level: {risk_level}")
+    print(f"  Autonomy Level: {autonomy_level}")
+    print(f"  Steps: {len(steps)}")
+    for i, step in enumerate(steps, 1):
+        action = step["action"] if isinstance(step, dict) else step.action.value
+        step_id = step["id"] if isinstance(step, dict) else step.id
+        print(f"    {i}. {action} ({step_id})")
+
+
+def _print_plan_json(plan):
+    """Print the full generated plan in JSON form."""
+    print("\nGenerated Plan JSON:")
+    print(json.dumps(plan, indent=2, ensure_ascii=False))
 
 
 def _print_execution_results(report):
     """Print execution report details."""
     print(f"\n  Execution Report:")
-    print(f"    Status: {'✓ EXECUTED' if report.executed else '✗ BLOCKED'}")
-    print(f"    Policy Source: {report.policy.source}")
-    print(
-        f"    Policy Mode: {report.policy.approval_mode.value} ({report.policy.verdict_color})"
-    )
-    print(f"    Reason: {report.policy.reason}")
-    if report.step_results:
-        print(f"    Steps Executed: {len(report.step_results)}")
-        for result in report.step_results:
-            status = "✓" if result.status_code < 400 else "✗"
+    print(f"    Status: {'✓ EXECUTED' if report.get('executed') else '✗ BLOCKED'}")
+    policy = report.get("policy", {})
+    print(f"    Policy Source: {policy.get('source')}")
+    approval_mode = policy.get("approval_mode")
+    if isinstance(approval_mode, dict):
+        approval_mode = approval_mode.get("value")
+    print(f"    Policy Mode: {approval_mode}")
+    print(f"    Reason: {policy.get('reason')}")
+    step_results = report.get("step_results", [])
+    if step_results:
+        print(f"    Steps Executed: {len(step_results)}")
+        for result in step_results:
+            status = "✓" if result.get("status_code", 0) < 400 else "✗"
+            action = result.get("action")
+            if isinstance(action, dict):
+                action = action.get("value")
             print(
-                f"      {status} {result.step_id}: {result.action.value} [{result.status_code}]"
+                f"      {status} {result.get('step_id')}: {action} [{result.get('status_code')}]"
             )
 
 
@@ -68,9 +97,9 @@ def example_1_basic_llm_planning():
         weather_observations=[
             WeatherObserved(
                 event_type="pump-failure",
-                station_id="Pumping Station 7",
+                station_id="Pumping Station 2",
                 precipitation=0,
-                location="Pumping Station 7",
+                location="Pumping Station 2",
                 notes="Pump fault detected: reduced pressure and vibration alerts",
             )
         ],
@@ -78,13 +107,14 @@ def example_1_basic_llm_planning():
 
     try:
         trace_id = str(uuid.uuid4())
-        plan = build_candidate_plan(event, trace_id=trace_id)
-        print(f"✓ Plan generated: {plan.plan_id}")
+        result = pipeline(event, trace_id=trace_id, execute=EXECUTE_PLANS)
+        plan = result["plan"]
+        print(f"✓ Plan generated: {plan['plan_id']}")
+        _print_plan_json(plan)
         _print_plan_details(plan)
 
-        if EXECUTE_PLANS:
-            report = execute_candidate_plan(plan)
-            _print_execution_results(report)
+        if result.get("execution"):
+            _print_execution_results(result["execution"])
     except Exception as e:
         print(f"✗ Error: {e}")
 
@@ -100,7 +130,7 @@ def example_2_flood_response():
         weather_observations=[
             WeatherObserved(
                 event_type="rain",
-                station_id="Station-09",
+                station_id="Station-01",
                 precipitation=75.0,
                 location="Downtown District",
                 notes="Heavy rainfall detected, flood risk rising",
@@ -110,13 +140,14 @@ def example_2_flood_response():
 
     try:
         trace_id = str(uuid.uuid4())
-        plan = build_candidate_plan(event, trace_id=trace_id)
-        print(f"✓ Plan generated: {plan.plan_id}")
+        result = pipeline(event, trace_id=trace_id, execute=EXECUTE_PLANS)
+        plan = result["plan"]
+        print(f"✓ Plan generated: {plan['plan_id']}")
+        _print_plan_json(plan)
         _print_plan_details(plan)
 
-        if EXECUTE_PLANS:
-            report = execute_candidate_plan(plan)
-            _print_execution_results(report)
+        if result.get("execution"):
+            _print_execution_results(result["execution"])
     except Exception as e:
         print(f"✗ Error: {e}")
 
@@ -139,9 +170,9 @@ def example_3_combined_scenario():
             ),
             WeatherObserved(
                 event_type="pump-failure",
-                station_id="Pumping Station 3",
+                station_id="Pumping Station 01",
                 precipitation=0,
-                location="Pumping Station 3",
+                location="Pumping Station 01",
                 notes="Pump failure detected: reduced pressure and vibration alerts",
             ),
         ],
@@ -149,13 +180,14 @@ def example_3_combined_scenario():
 
     try:
         trace_id = str(uuid.uuid4())
-        plan = build_candidate_plan(event, trace_id=trace_id)
-        print(f"✓ Plan generated: {plan.plan_id}")
+        result = pipeline(event, trace_id=trace_id, execute=EXECUTE_PLANS)
+        plan = result["plan"]
+        print(f"✓ Plan generated: {plan['plan_id']}")
+        _print_plan_json(plan)
         _print_plan_details(plan)
 
-        if EXECUTE_PLANS:
-            report = execute_candidate_plan(plan)
-            _print_execution_results(report)
+        if result.get("execution"):
+            _print_execution_results(result["execution"])
     except Exception as e:
         print(f"✗ Error: {e}")
 
@@ -173,13 +205,14 @@ def example_4_normal_operation():
 
     try:
         trace_id = str(uuid.uuid4())
-        plan = build_candidate_plan(event, trace_id=trace_id)
-        print(f"✓ Plan generated: {plan.plan_id}")
+        result = pipeline(event, trace_id=trace_id, execute=EXECUTE_PLANS)
+        plan = result["plan"]
+        print(f"✓ Plan generated: {plan['plan_id']}")
+        _print_plan_json(plan)
         _print_plan_details(plan)
 
-        if EXECUTE_PLANS:
-            report = execute_candidate_plan(plan)
-            _print_execution_results(report)
+        if result.get("execution"):
+            _print_execution_results(result["execution"])
     except Exception as e:
         print(f"✗ Error: {e}")
 
@@ -214,10 +247,10 @@ if __name__ == "__main__":
 
     # Run examples
     # Note: These will use deterministic planner by default unless LLM is configured
-    example_1_basic_llm_planning()
+    # example_1_basic_llm_planning()
     example_2_flood_response()
-    example_3_combined_scenario()
-    example_4_normal_operation()
+    # example_3_combined_scenario()
+    # example_4_normal_operation()
 
     print("\n" + "=" * 60)
     print("Examples Complete")

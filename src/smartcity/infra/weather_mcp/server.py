@@ -192,9 +192,9 @@ def main():
     transport = sys.argv[1] if len(sys.argv) > 1 else "http"
     port = int(sys.argv[2]) if len(sys.argv) > 2 else 8002
     if transport == "http":
-        mcp.run(transport="http", port=port)
+        mcp.run(transport="http", port=port, host="0.0.0.0")
     else:
-        mcp.run(transport=transport)
+        mcp.run(transport=transport, host="0.0.0.0")
 
 
 if __name__ == "__main__":

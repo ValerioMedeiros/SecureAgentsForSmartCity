@@ -61,30 +61,12 @@ services:
       - "8002:8002"
     restart: unless-stopped
 
-  mcp-server:
-    build:
-      context: .
-      dockerfile: Dockerfile.mcp-server
-    container_name: smartcity-mcp-server
-    depends_on:
-      - fiware-mcp
-      - pump-mcp
-      - opa
-    ports:
-      - "8000:8000"
-    environment:
-      - FIWARE_MCP_URL=http://fiware-mcp:8001/mcp
-      - PUMP_MCP_URL=http://pump-mcp:8002/mcp
-      - OPA_URL=http://opa:8181
-    restart: unless-stopped
-
   monitor:
     build:
       context: .
       dockerfile: Dockerfile.monitor
     container_name: smartcity-monitor
     depends_on:
-      - mcp-server
       - fiware-mcp
       - pump-mcp
     ports:
@@ -93,7 +75,6 @@ services:
       - MONITOR_CALLBACK_URL=http://monitor:8010/monitor/notify
       - FIWARE_MCP_URL=http://fiware-mcp:8001/mcp
       - PUMP_MCP_URL=http://pump-mcp:8002/mcp
-      - MCP_SERVER_URL=http://mcp-server:8000/mcp
     restart: unless-stopped
 
 volumes:

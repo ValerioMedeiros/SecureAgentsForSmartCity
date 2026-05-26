@@ -223,7 +223,7 @@ def generate_plan_with_llm(
         prompt_text = PLAN_GENERATION_PROMPT.format(
             event_data=_mask_pii(event_data),
             available_actions=_get_available_actions_description(),
-            available_pumps="Pump:001 (max 120 m³/h), Pump:002 (max 80 m³/h)",
+            available_pumps="Pump:001, Pump:002",
             schema_example=_get_schema_example(),
         )
 
