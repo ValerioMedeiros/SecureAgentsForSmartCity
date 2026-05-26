@@ -155,8 +155,8 @@ class OrionClient:
         return self._request("POST", url, json=entity_data, headers=self._headers({"Content-Type": "application/json"}))
 
     def upsert_entity(self, entity_data: dict) -> requests.Response:
-        """Create or update an entity using keyValues upsert."""
-        url = f"{self.base_url}/v2/entities?options=upsert,keyValues"
+        """Create or update an entity using normalized upsert (preserves attribute types like geo:json)."""
+        url = f"{self.base_url}/v2/entities?options=upsert"
         return self._request("POST", url, json=entity_data, headers=self._headers({"Content-Type": "application/json"}))
 
     def update_entity(self, payload: dict, action_type: ActionType = "APPEND") -> requests.Response:

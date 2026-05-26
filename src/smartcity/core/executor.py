@@ -19,9 +19,7 @@ from .models import CandidatePlan, ExecutionReport, StepResult
 from .policy_engine import evaluate_plan
 
 load_dotenv()
-
 logger = configure_logger("executor")
-
 
 def _run_async(coro):
     """Run async Pump MCP client calls from both sync and async contexts."""

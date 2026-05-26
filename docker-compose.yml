@@ -76,6 +76,15 @@ services:
       - "8003:8003"
     restart: unless-stopped
 
+  citizen-interface:
+    build:
+      context: .
+      dockerfile: Dockerfile.citizen-interface
+    container_name: smartcity-citizen-interface
+    ports:
+      - "8020:8020"
+    restart: unless-stopped
+
   monitor:
     build:
       context: .
@@ -85,6 +94,8 @@ services:
       - fiware-mcp
       - pump-mcp
       - weather-mcp
+      - citizen-interface
+      - opa
     ports:
       - "8010:8010"
     environment:
@@ -92,6 +103,11 @@ services:
       - FIWARE_MCP_URL=http://fiware-mcp:8001/mcp
       - PUMP_MCP_URL=http://pump-mcp:8002/mcp
       - WEATHER_MCP_URL=http://weather-mcp:8003/mcp
+      - OPA_URL=http://opa:8181
+      - CITIZEN_INTERFACE_URL=http://citizen-interface:8020
+      - LLM_AGENT_ENABLED=true
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o-mini}
     restart: unless-stopped
 
 volumes:

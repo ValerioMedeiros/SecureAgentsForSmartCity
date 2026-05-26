@@ -6,15 +6,13 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import Body, FastAPI, HTTPException, Query, Response
 
-from ..core.executor import execute_candidate_plan
 from ..core.models import MonitorEvent, WeatherObserved
-from ..core.planner import build_candidate_plan
+from ..core.weather_agent import run as run_weather_agent
 from ..infra.audit import read_entries, record_event, verify_chain
 from ..infra.logging_utils import configure_logger
 from ..infra.metrics import render_latest, stage_timer
 from ..infra.ngsi_client import create_subscription
 from ..infra.pump_mcp_client import get_nearest_pump
-from ..infra.weather_mcp_client import get_rainfall_risk as weather_rainfall_risk
 
 logger = configure_logger("monitor")
 app = FastAPI(title="Monitor Service")
@@ -88,42 +86,12 @@ async def handle_notification(payload: Dict[str, Any] = Body(...)) -> Dict[str, 
             if obs.coordinates:
                 lon, lat = obs.coordinates
 
-                # Fetch rainfall risk forecast from Weather MCP
-                try:
-                    forecast = await weather_rainfall_risk(lat, lon, hours=6)
-                    flood_risk = forecast.get("flood_risk") if isinstance(forecast, dict) else None
-                    total_precip = forecast.get("total_precipitation_mm") if isinstance(forecast, dict) else None
-                    obs = obs.model_copy(update={
-                        "rainfall_risk": flood_risk,
-                        "forecast_precipitation_mm": total_precip,
-                        "forecast_hours": 6,
-                    })
-                    logger.info(
-                        "Weather forecast enriched observation",
-                        extra={"traceId": trace_id, "extra_fields": {
-                            "station_id": obs.station_id,
-                            "flood_risk": flood_risk,
-                            "forecast_precipitation_mm": total_precip,
-                        }},
-                    )
-                except Exception as exc:
-                    logger.warning(
-                        "Weather MCP forecast unavailable, continuing without forecast",
-                        extra={"traceId": trace_id, "extra_fields": {
-                            "station_id": obs.station_id,
-                            "error": str(exc),
-                        }},
-                    )
-
-                # Resolve nearest pump when current precipitation or forecast warrants it
-                should_resolve_pump = (
-                    obs.precipitation > 0.50
-                    or obs.rainfall_risk in ("alto", "crítico")
-                )
+                # Resolve nearest pump based on current precipitation threshold
+                should_resolve_pump = obs.precipitation > 0.50
                 if should_resolve_pump:
                     pump_entity = await get_nearest_pump(lon, lat, obs.coverage_radius_m)
                     if pump_entity:
-                        pump_id = pump_entity.get("id", "").replace("PumpDevice:", "Pump:")
+                        pump_id = pump_entity.get("id", "")
                         obs = obs.model_copy(update={"pump_id": pump_id})
                         logger.info(
                             "Nearest pump resolved via geo-query",
@@ -160,16 +128,16 @@ async def handle_notification(payload: Dict[str, Any] = Body(...)) -> Dict[str, 
                 "raw_keys": list(payload.keys()),
             },
         )
-        plan = build_candidate_plan(event, trace_id)
-        report = execute_candidate_plan(plan)
+        agent_result = await run_weather_agent(event, trace_id)
+
     logger.info(
-        "MAPE-K loop completed from monitor event",
+        "Weather Agent loop completed",
         extra={
             "traceId": trace_id,
             "extra_fields": {
                 "scenario": event.event_type,
-                "executed": report.executed,
-                "policy_mode": report.policy.approval_mode.value,
+                "source": agent_result.get("source"),
+                "tool_calls": agent_result.get("tool_calls", []),
                 "duration_ms": timing["duration_ms"],
             },
         },
@@ -178,22 +146,20 @@ async def handle_notification(payload: Dict[str, Any] = Body(...)) -> Dict[str, 
         component="monitor",
         event_type="LOOP_COMPLETED",
         trace_id=trace_id,
-        plan_id=report.plan_id,
         actor="monitor",
-        outcome="executed" if report.executed else "not_executed",
+        outcome="completed",
         payload={
             "scenario": event.event_type,
-            "executed": report.executed,
-            "policy_mode": report.policy.approval_mode.value,
-            "risk_level": report.policy.risk_level.value,
+            "source": agent_result.get("source"),
+            "tool_calls": agent_result.get("tool_calls", []),
             "duration_ms": timing["duration_ms"],
         },
     )
     return {
         "traceId": trace_id,
-        "planId": report.plan_id,
-        "executed": report.executed,
-        "policy": report.policy.model_dump(),
+        "source": agent_result.get("source"),
+        "tool_calls": agent_result.get("tool_calls", []),
+        "summary": agent_result.get("summary", ""),
     }
 
 

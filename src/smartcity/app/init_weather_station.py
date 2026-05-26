@@ -32,25 +32,25 @@ WEATHER_STATIONS = [
     {
         "id": "WeatherStation:001",
         "type": "WeatherObserved",
-        "precipitation": 0.0,           # mm  — alert threshold: > 0.50
-        "humidity": 60.0,               # %   — alert threshold: > 80
-        "atmosphericPressure": 1013.0,  # hPa — alert threshold: < 1005
-        "coverage_radius_m": 300,       # meters — pump search radius
+        "precipitation":      {"type": "Number", "value": 0.0},
+        "humidity":           {"type": "Number", "value": 60.0},
+        "atmosphericPressure":{"type": "Number", "value": 1013.0},
+        "coverage_radius_m":  {"type": "Number", "value": 300},
         "location": {
-            "type": "Point",
-            "coordinates": [-35.2094, -5.7945],  # [lon, lat] — Lagoa Norte
+            "type": "geo:json",
+            "value": {"type": "Point", "coordinates": [-35.2094, -5.7945]},
         },
     },
     {
         "id": "WeatherStation:002",
         "type": "WeatherObserved",
-        "precipitation": 0.0,
-        "humidity": 60.0,
-        "atmosphericPressure": 1013.0,
-        "coverage_radius_m": 300,
+        "precipitation":      {"type": "Number", "value": 0.0},
+        "humidity":           {"type": "Number", "value": 60.0},
+        "atmosphericPressure":{"type": "Number", "value": 1013.0},
+        "coverage_radius_m":  {"type": "Number", "value": 300},
         "location": {
-            "type": "Point",
-            "coordinates": [-35.2180, -5.8020],  # [lon, lat] — Lagoa Sul
+            "type": "geo:json",
+            "value": {"type": "Point", "coordinates": [-35.2180, -5.8020]},
         },
     },
 ]
@@ -114,8 +114,8 @@ async def _init() -> None:
             "WeatherStation initialised",
             extra={"traceId": trace_id, "extra_fields": {
                 "id": station["id"],
-                "coordinates": station["location"]["coordinates"],
-                "coverage_radius_m": station["coverage_radius_m"],
+                "coordinates": station["location"]["value"]["coordinates"],
+                "coverage_radius_m": station["coverage_radius_m"]["value"],
                 "result": result,
             }},
         )

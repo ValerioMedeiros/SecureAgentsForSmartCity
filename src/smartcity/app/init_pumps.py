@@ -33,8 +33,8 @@ PUMP_DEVICES = [
         "flow_rate_m3h": {"type": "Number", "value": 0.0},
         "max_flow_rate_m3h": {"type": "Number", "value": 120.0},
         "location": {
-            "type": "Point",
-            "coordinates": [-35.2100, -5.7950],  # ~90m from WeatherStation:001
+            "type": "geo:json",
+            "value": {"type": "Point", "coordinates": [-35.2100, -5.7950]},
         },
     },
     {
@@ -44,8 +44,8 @@ PUMP_DEVICES = [
         "flow_rate_m3h": {"type": "Number", "value": 0.0},
         "max_flow_rate_m3h": {"type": "Number", "value": 80.0},
         "location": {
-            "type": "Point",
-            "coordinates": [-35.2185, -5.8025],  # ~80m from WeatherStation:002
+            "type": "geo:json",
+            "value": {"type": "Point", "coordinates": [-35.2185, -5.8025]},
         },
     },
 ]
@@ -63,7 +63,7 @@ async def _init() -> None:
                 "traceId": trace_id,
                 "extra_fields": {
                     "id": pump["id"],
-                    "coordinates": pump["location"]["coordinates"],
+                    "coordinates": pump["location"]["value"]["coordinates"],
                     "result": orion_entity,
                 },
             },
