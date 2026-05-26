@@ -28,14 +28,15 @@ class SecurityManager:
         ]
 
     def authorize_plan(self, token: str, plan: CandidatePlan) -> bool:
+        if not token:
+            return False
         for user in self.users:
             if user.token == token:
                 for step in plan.steps:
                     if step.action not in user.permissions:
                         return False
                 return True
-        else:
-            return False
+        return False
         
     def get_authorized_users(self, action: ActionType) -> List[str]:
         authorized_users = []

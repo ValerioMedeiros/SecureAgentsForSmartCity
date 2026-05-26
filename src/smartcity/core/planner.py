@@ -90,20 +90,20 @@ def _build_rule_based_plan(event: MonitorEvent, trace_id: str) -> Dict[str, Any]
         }
     ]
 
-    # If a pump was resolved via geo-query, add pump actuation steps
-    if event.pump_id and (event.flood_risk or event.heavy_rain):
-        steps += [
-            {
-                "id": "check-pump",
-                "action": ActionType.GET_PUMP_STATUS.value,
-                "params": {"pump_id": event.pump_id},
-            },
-            {
-                "id": "activate-pump",
-                "action": ActionType.TURN_ON_PUMP.value,
-                "params": {"pump_id": event.pump_id},
-            },
-        ]
+    # If any weather observation has a resolved pump, add pump actuation steps
+    for obs in (event.weather_observations or []):
+        pump_id = getattr(obs, "pump_id", None)
+        precipitation = float(getattr(obs, "precipitation", 0) or 0)
+        if pump_id and precipitation > 0.50:
+            goal = "Activate pump in response to weather alert"
+            scenario = "flood-response"
+            steps += [
+                {
+                    "id": f"activate-pump-{pump_id}",
+                    "action": ActionType.TURN_ON_PUMP.value,
+                    "params": {"entity_id": pump_id},
+                },
+            ]
 
     return {
         "plan_id": str(uuid.uuid4()),
@@ -200,7 +200,7 @@ def malformed_plan_fixture(trace_id: str) -> Dict[str, Any]:
         "steps": [
             {
                 "id": "bad-step",
-                "action": "setPriorityCorridor",
+                "action": "turnOnPump",
                 "params": {"entity_id": PUMP_ENTITY_ID},
             }
         ],

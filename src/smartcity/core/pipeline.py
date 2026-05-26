@@ -217,19 +217,16 @@ def pipeline(
             )
             plan.approval.human_token = human_token
 
-        if (
-            policy.approval_mode.value != "human"
-            and not security_manager.authorize_plan(plan.approval.human_token, plan)
-        ):
-            raise PermissionError(
-                "Execution token does not have permission to execute this plan"
-            )
+        # Human-approved plans need the token validated; auto plans execute directly
+        human_approved = (
+            policy.approval_mode.value == "human"
+            and human_token is not None
+            and security_manager.authorize_plan(human_token, plan)
+        )
 
         execution_report: ExecutionReport | None = None
         if execute:
-            if policy.allowed or (
-                policy.approval_mode.value == "human" and human_token
-            ):
+            if policy.allowed or human_approved:
                 execution_report = _execute_plan(
                     plan=plan,
                     decision=policy,

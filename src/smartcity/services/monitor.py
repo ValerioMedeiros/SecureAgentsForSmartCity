@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import Body, FastAPI, HTTPException, Query, Response
 
 from ..core.executor import execute_candidate_plan
-from ..core.models import MonitorEvent
+from ..core.models import MonitorEvent, WeatherObserved
 from ..core.planner import build_candidate_plan
 from ..infra.audit import read_entries, record_event, verify_chain
 from ..infra.logging_utils import configure_logger
@@ -20,7 +20,6 @@ app = FastAPI(title="Monitor Service")
 
 MONITOR_CALLBACK_URL = os.getenv("MONITOR_CALLBACK_URL", "http://localhost:8010/monitor/notify")
 
-TRAFFIC_SIGNAL_ID = os.getenv("TRAFFIC_SIGNAL_ID", "TrafficSignal:001")
 
 def _get_attr_value(item: Dict[str, Any], key: str, default=None):
     """Extract value from NGSI-v2 attribute (supports both {value: X} and raw scalar)."""
@@ -35,17 +34,18 @@ def _notification_to_event(notification: Dict[str, Any]) -> MonitorEvent:
     if not data:
         return MonitorEvent(event_type="empty")
 
-    item = data[0]
-    entity_type = str(item.get("type", "")).lower()
+    observations: List[WeatherObserved] = []
+    for item in data:
+        entity_type = str(item.get("type", "")).lower()
+        if entity_type != "weatherobserved":
+            continue
 
-    # --- WeatherObserved (from WeatherStation) ---
-    if entity_type == "weatherobserved":
         precipitation = float(_get_attr_value(item, "precipitation", 0))
         humidity = float(_get_attr_value(item, "humidity", 0))
         pressure = float(_get_attr_value(item, "atmosphericPressure", 1013))
         coverage_radius_m = int(_get_attr_value(item, "coverage_radius_m", 300))
+        station_id = str(item.get("id", "unknown"))
 
-        # Extract geo:json coordinates — value is {"type": "Point", "coordinates": [lon, lat]}
         location_val = _get_attr_value(item, "location", {})
         coordinates = None
         location_str = "unknown"
@@ -57,35 +57,22 @@ def _notification_to_event(notification: Dict[str, Any]) -> MonitorEvent:
         elif isinstance(location_val, str):
             location_str = location_val
 
-        heavy_rain = precipitation > 0.50
-        flood_risk = precipitation > 5.0 or pressure < 1005
-
-        return MonitorEvent(
+        observations.append(WeatherObserved(
             event_type="weather",
-            ambulance_detected=False,
-            heavy_rain=heavy_rain,
-            flood_risk=flood_risk,
-            crowd_level="high" if flood_risk else ("normal" if not heavy_rain else "dense"),
+            station_id=station_id,
+            precipitation=precipitation,
+            humidity=humidity,
+            atmospheric_pressure=pressure,
             location=location_str,
             notes=f"precipitation={precipitation}mm humidity={humidity}% pressure={pressure}hPa",
             coordinates=coordinates,
             coverage_radius_m=coverage_radius_m,
-        )
+        ))
 
-    # --- TrafficSignal or generic event ---
-    weather = str(_get_attr_value(item, "weather", "normal")).lower()
-    crowd = str(_get_attr_value(item, "crowd", "normal")).lower()
-    event_type = str(_get_attr_value(item, "eventType", "combined")).lower()
+    if not observations:
+        return MonitorEvent(event_type="unknown")
 
-    return MonitorEvent(
-        event_type=event_type,
-        ambulance_detected=bool(_get_attr_value(item, "ambulanceDetected", False)),
-        heavy_rain=weather in {"rain", "storm", "heavy_rain"},
-        flood_risk=bool(_get_attr_value(item, "floodRisk", False)),
-        crowd_level=crowd,
-        location=str(_get_attr_value(item, "location", "unknown")),
-        notes=str(_get_attr_value(item, "notes", "")) or None,
-    )
+    return MonitorEvent(event_type="weather", weather_observations=observations)
 
 
 @app.post("/monitor/notify")
@@ -94,31 +81,37 @@ async def handle_notification(payload: Dict[str, Any] = Body(...)) -> Dict[str, 
     with stage_timer("monitor", "monitor") as timing:
         event = _notification_to_event(payload)
 
-        # Resolve nearest pump via geo-query when flood risk detected
-        if event.flood_risk and event.coordinates:
-            lon, lat = event.coordinates
-            pump_entity = await get_nearest_pump(lon, lat, event.coverage_radius_m)
-            if pump_entity:
-                pump_orion_id = pump_entity.get("id", "")
-                event = event.model_copy(update={
-                    "pump_id": pump_orion_id.replace("PumpDevice:", "Pump:")
-                })
-                logger.info(
-                    "Nearest pump resolved via geo-query",
-                    extra={"traceId": trace_id, "extra_fields": {
-                        "pump_id": event.pump_id,
-                        "radius_m": event.coverage_radius_m,
-                        "coordinates": event.coordinates,
-                    }},
-                )
-            else:
-                logger.warning(
-                    "No available pump found within radius",
-                    extra={"traceId": trace_id, "extra_fields": {
-                        "radius_m": event.coverage_radius_m,
-                        "coordinates": event.coordinates,
-                    }},
-                )
+        # Resolve nearest pump via geo-query for each weather observation
+        resolved_observations = []
+        for obs in (event.weather_observations or []):
+            if obs.coordinates and obs.precipitation > 0.50:
+                lon, lat = obs.coordinates
+                pump_entity = await get_nearest_pump(lon, lat, obs.coverage_radius_m)
+                if pump_entity:
+                    pump_id = pump_entity.get("id", "").replace("PumpDevice:", "Pump:")
+                    obs = obs.model_copy(update={"pump_id": pump_id})
+                    logger.info(
+                        "Nearest pump resolved via geo-query",
+                        extra={"traceId": trace_id, "extra_fields": {
+                            "station_id": obs.station_id,
+                            "pump_id": pump_id,
+                            "radius_m": obs.coverage_radius_m,
+                            "coordinates": obs.coordinates,
+                        }},
+                    )
+                else:
+                    logger.warning(
+                        "No available pump found within radius",
+                        extra={"traceId": trace_id, "extra_fields": {
+                            "station_id": obs.station_id,
+                            "radius_m": obs.coverage_radius_m,
+                            "coordinates": obs.coordinates,
+                        }},
+                    )
+            resolved_observations.append(obs)
+
+        if resolved_observations:
+            event = event.model_copy(update={"weather_observations": resolved_observations})
 
         record_event(
             component="monitor",
@@ -128,11 +121,7 @@ async def handle_notification(payload: Dict[str, Any] = Body(...)) -> Dict[str, 
             outcome=event.event_type,
             payload={
                 "event_type": event.event_type,
-                "ambulance_detected": event.ambulance_detected,
-                "heavy_rain": event.heavy_rain,
-                "flood_risk": event.flood_risk,
-                "crowd_level": event.crowd_level,
-                "location": event.location,
+                "observations": len(event.weather_observations or []),
                 "raw_keys": list(payload.keys()),
             },
         )
@@ -213,15 +202,15 @@ def audit_verify() -> Dict[str, Any]:
 def register_default_subscription() -> Dict[str, Any]:
     trace_id = str(uuid.uuid4())
     subscription = {
-        "description": "Monitor traffic/weather events",
+        "description": "Monitor WeatherObserved events",
         "subject": {
-            "entities": [{"id": TRAFFIC_SIGNAL_ID, "type": "TrafficSignal"}],
-            "condition": {"attrs": ["status", "priorityCorridor"]},
+            "entities": [{"idPattern": "WeatherStation:.*", "type": "WeatherObserved"}],
+            "condition": {"attrs": ["precipitation", "humidity", "atmosphericPressure"]},
         },
         "notification": {
             "http": {"url": MONITOR_CALLBACK_URL},
-            "attrs": ["status", "priorityCorridor", "location"],
+            "attrs": ["precipitation", "humidity", "atmosphericPressure", "location", "coverage_radius_m"],
         },
-        "throttling": 1,
+        "throttling": 5,
     }
     return create_subscription(subscription, trace_id)

@@ -54,7 +54,6 @@ def _fallback_policy(plan: CandidatePlan) -> PolicyDecision:
         allowed=allowed,
         risk_level=risk_level,
         approval_mode=mode,
-        verdict_color=_color_for_mode(mode),
         reason=reason,
         source="fallback",
     )
@@ -83,7 +82,6 @@ def _opa_policy(
         allowed=bool(result.get("allowed", False)),
         risk_level=RiskLevel(result.get("risk_level", plan.risk_level.value)),
         approval_mode=mode,
-        verdict_color=result.get("verdict_color", _color_for_mode(mode)),
         reason=result.get("reason", "Policy decision returned by OPA"),
         source="opa",
     )
@@ -136,7 +134,6 @@ def evaluate_plan(
             "allowed": decision.allowed,
             "approval_mode": decision.approval_mode.value,
             "risk_level": decision.risk_level.value,
-            "verdict_color": decision.verdict_color,
             "reason": decision.reason,
             "duration_ms": timing["duration_ms"],
         },

@@ -14,7 +14,7 @@ from ..infra.metrics import (
     stage_timer,
 )
 from .models import CandidatePlan, ExecutionReport, StepResult
-from .policy_engine import USER_TOKEN, evaluate_plan
+from .policy_engine import evaluate_plan
 
 load_dotenv()
 
@@ -27,7 +27,6 @@ def execute_candidate_plan(plan: CandidatePlan) -> ExecutionReport:
     trace_id = plan.telemetry.trace_id
     decision = evaluate_plan(
         plan=plan.to_wire_dict(),
-        provided_token=USER_TOKEN,
         trace_id=trace_id,
     )
 
@@ -72,7 +71,6 @@ def execute_candidate_plan(plan: CandidatePlan) -> ExecutionReport:
                 "method": step.action.value,
                 "params": step.params,
                 "traceId": trace_id,
-                "token": USER_TOKEN,
             }
             with stage_timer("mcp_call_client", "executor") as step_timing:
                 try:
