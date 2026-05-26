@@ -90,13 +90,13 @@ def _opa_policy(
 
 
 def evaluate_plan(
-    plan: Dict[str, Any], provided_token: str, trace_id: str
+    plan: Dict[str, Any], trace_id: str
 ) -> PolicyDecision:
     validated_plan = CandidatePlan.model_validate(plan)
 
     with stage_timer("policy", "policy_engine") as timing:
         try:
-            decision = _opa_policy(validated_plan, provided_token, trace_id)
+            decision = _opa_policy(validated_plan)
         except Exception as exc:  # pragma: no cover - network path
             ERRORS_TOTAL.labels(component="opa", kind="opa_unavailable").inc()
             logger.warning(
@@ -106,7 +106,7 @@ def evaluate_plan(
                     "extra_fields": {"error": str(exc)},
                 },
             )
-            decision = _fallback_policy(validated_plan, provided_token)
+            decision = _fallback_policy(validated_plan)
 
     POLICY_DECISIONS_TOTAL.labels(
         approval_mode=decision.approval_mode.value,
@@ -119,7 +119,10 @@ def evaluate_plan(
         "Policy evaluated",
         extra={
             "traceId": trace_id,
-            "extra_fields": {**decision.model_dump(), "duration_ms": timing["duration_ms"]},
+            "extra_fields": {
+                **decision.model_dump(),
+                "duration_ms": timing["duration_ms"],
+            },
         },
     )
     record_event(
