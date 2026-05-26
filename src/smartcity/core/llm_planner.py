@@ -21,7 +21,7 @@ load_dotenv()
 logger = configure_logger("llm_planner")
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4-turbo")
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 LLM_PLANNER_ENABLED = os.getenv("LLM_PLANNER_ENABLED", "true").lower() == "true"
 LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.3"))
 
@@ -62,6 +62,7 @@ Your task is to generate a pump management plan in response to a monitoring even
    - HIGH: flood risk, heavy winds, forecast risco=alto or crítico
 5. If forecast indicates alto or crítico risk, activate pumps preventively even if current precipitation is low
 6. Use realistic goal and scenario descriptions based on the event context
+7. If a pump is failing, include steps to turn it off and notify maintenance
 
 ## Output
 Return ONLY the JSON plan, no explanation or markdown:
@@ -240,7 +241,7 @@ def generate_plan_with_llm(
         prompt_text = PLAN_GENERATION_PROMPT.format(
             event_data=_mask_pii(event_data),
             available_actions=_get_available_actions_description(),
-            available_pumps="Pump:001, Pump:002",
+            available_pumps="PumpDevice:001, PumpDevice:002",
             schema_example=_get_schema_example(),
             weather_forecast=_build_forecast_context(event),
         )

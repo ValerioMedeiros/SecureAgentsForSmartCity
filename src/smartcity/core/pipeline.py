@@ -97,7 +97,7 @@ def _run_async(coro):
 
 
 def _extract_pump_id(params: Dict[str, Any]) -> str:
-    return str(params.get("pump_id") or params.get("entity_id") or "Pump:001")
+    return str(params.get("pump_id") or params.get("entity_id") or "PumpDevice:001")
 
 
 def _invoke_step(action: str, params: Dict[str, Any]) -> tuple[int, str]:

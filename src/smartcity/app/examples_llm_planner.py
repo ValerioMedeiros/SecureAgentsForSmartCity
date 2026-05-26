@@ -97,9 +97,9 @@ def example_1_basic_llm_planning():
         weather_observations=[
             WeatherObserved(
                 event_type="pump-failure",
-                station_id="Pumping Station 2",
+                station_id="Pumping Station 1",
                 precipitation=0,
-                location="Pumping Station 2",
+                location="Pumping Station 1",
                 notes="Pump fault detected: reduced pressure and vibration alerts",
             )
         ],
@@ -130,7 +130,7 @@ def example_2_flood_response():
         weather_observations=[
             WeatherObserved(
                 event_type="rain",
-                station_id="Station-01",
+                station_id="Station-02",
                 precipitation=75.0,
                 location="Downtown District",
                 notes="Heavy rainfall detected, flood risk rising",
@@ -247,7 +247,7 @@ if __name__ == "__main__":
 
     # Run examples
     # Note: These will use deterministic planner by default unless LLM is configured
-    # example_1_basic_llm_planning()
+    #example_1_basic_llm_planning()
     example_2_flood_response()
     # example_3_combined_scenario()
     # example_4_normal_operation()

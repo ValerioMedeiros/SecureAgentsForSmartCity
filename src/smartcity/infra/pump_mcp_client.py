@@ -39,17 +39,17 @@ async def _call(tool_name: str, params: dict) -> Any:
         return text
 
 
-async def get_pump_status(pump_id: str = "Pump:001") -> dict:
+async def get_pump_status(pump_id: str = "PumpDevice:001") -> dict:
     """Retorna o estado atual de uma bomba."""
     return await _call("get_pump_status", {"pump_id": pump_id})
 
 
-async def turn_on_pump(pump_id: str = "Pump:001") -> dict:
+async def turn_on_pump(pump_id: str = "PumpDevice:001") -> dict:
     """Liga uma bomba."""
     return await _call("turn_on_pump", {"pump_id": pump_id})
 
 
-async def turn_off_pump(pump_id: str = "Pump:001") -> dict:
+async def turn_off_pump(pump_id: str = "PumpDevice:001") -> dict:
     """Desliga uma bomba."""
     return await _call("turn_off_pump", {"pump_id": pump_id})
 

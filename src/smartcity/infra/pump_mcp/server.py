@@ -51,7 +51,7 @@ _pumps: Dict[str, Dict[str, Any]] = {
     },
 }
 
-DEFAULT_PUMP_ID = "Pump:001"
+DEFAULT_PUMP_ID = "PumpDevice:001"
 
 
 def _now() -> str:
@@ -70,7 +70,7 @@ def get_pump_status(pump_id: str = DEFAULT_PUMP_ID) -> dict:
     Retorna o estado atual de uma bomba.
 
     Args:
-        pump_id: ID da bomba (ex: 'Pump:001'). Padrão: 'Pump:001'.
+        pump_id: ID da bomba (ex: 'PumpDevice:001'). Padrão: 'PumpDevice:001'.
 
     Returns:
         Dict com id, location, status ('on'/'off'), flow_rate_m3h e last_updated.
@@ -90,7 +90,7 @@ def turn_on_pump(pump_id: str = DEFAULT_PUMP_ID) -> dict:
     Retorna erro se a bomba já estiver ligada ou não for encontrada.
 
     Args:
-        pump_id: ID da bomba (ex: 'Pump:001'). Padrão: 'Pump:001'.
+        pump_id: ID da bomba (ex: 'PumpDevice:001'). Padrão: 'PumpDevice:001'.
     """
     pump = _get_pump(pump_id)
     if pump is None:
@@ -125,7 +125,7 @@ def turn_off_pump(pump_id: str = DEFAULT_PUMP_ID) -> dict:
     desligada ou não for encontrada.
 
     Args:
-        pump_id: ID da bomba (ex: 'Pump:001'). Padrão: 'Pump:001'.
+        pump_id: ID da bomba (ex: 'PumpDevice:001'). Padrão: 'PumpDevice:001'.
     """
     pump = _get_pump(pump_id)
     if pump is None:

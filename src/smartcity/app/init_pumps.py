@@ -29,9 +29,9 @@ PUMP_DEVICES = [
     {
         "id": "PumpDevice:001",
         "type": "PumpDevice",
-        "status": "off",
-        "flow_rate_m3h": 0.0,
-        "max_flow_rate_m3h": 120.0,
+        "status": {"type": "Text", "value": "off"},
+        "flow_rate_m3h": {"type": "Number", "value": 0.0},
+        "max_flow_rate_m3h": {"type": "Number", "value": 120.0},
         "location": {
             "type": "Point",
             "coordinates": [-35.2100, -5.7950],  # ~90m from WeatherStation:001
@@ -40,9 +40,9 @@ PUMP_DEVICES = [
     {
         "id": "PumpDevice:002",
         "type": "PumpDevice",
-        "status": "off",
-        "flow_rate_m3h": 0.0,
-        "max_flow_rate_m3h": 80.0,
+        "status": {"type": "Text", "value": "off"},
+        "flow_rate_m3h": {"type": "Number", "value": 0.0},
+        "max_flow_rate_m3h": {"type": "Number", "value": 80.0},
         "location": {
             "type": "Point",
             "coordinates": [-35.2185, -5.8025],  # ~80m from WeatherStation:002
@@ -55,7 +55,8 @@ async def _init() -> None:
     trace_id = str(uuid.uuid4())
 
     for pump in PUMP_DEVICES:
-        result = await upsert_entity(pump)
+        orion_entity = await upsert_entity(pump)
+
         logger.info(
             "PumpDevice initialised",
             extra={
@@ -63,7 +64,7 @@ async def _init() -> None:
                 "extra_fields": {
                     "id": pump["id"],
                     "coordinates": pump["location"]["coordinates"],
-                    "result": result,
+                    "result": orion_entity,
                 },
             },
         )

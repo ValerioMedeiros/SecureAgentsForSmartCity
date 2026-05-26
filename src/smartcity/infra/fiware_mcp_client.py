@@ -23,7 +23,9 @@ FIWARE_MCP_URL = os.getenv("FIWARE_MCP_URL", "http://localhost:8001/mcp")
 async def _call(tool_name: str, params: dict) -> Any:
     """Call a FIWARE MCP tool and return the parsed result."""
     async with Client(FIWARE_MCP_URL) as client:
+        print("Calling FIWARE MCP tool:", tool_name, "with params:", params)
         result = await client.call_tool(tool_name, params)
+        print("Raw result from FIWARE MCP:", result)
 
     # fastmcp 3.x returns a CallToolResult with a .content list
     items = result.content if hasattr(result, "content") else result
@@ -87,6 +89,7 @@ async def get_entities(
 
 async def upsert_entity(entity_data: dict) -> Any:
     """Create or update an entity (idempotent)."""
+    print(f"Upserting entity in Orion: {entity_data.get('id', 'unknown')}")
     return await _call("upsert_entity", {"entity_json": json.dumps(entity_data)})
 
 
