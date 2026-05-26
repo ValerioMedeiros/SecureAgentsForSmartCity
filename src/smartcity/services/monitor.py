@@ -13,6 +13,7 @@ from ..infra.audit import read_entries, record_event, verify_chain
 from ..infra.logging_utils import configure_logger
 from ..infra.metrics import render_latest, stage_timer
 from ..infra.ngsi_client import create_subscription
+from ..infra.pump_mcp_client import get_nearest_pump
 
 logger = configure_logger("monitor")
 app = FastAPI(title="Monitor Service")
@@ -42,7 +43,19 @@ def _notification_to_event(notification: Dict[str, Any]) -> MonitorEvent:
         precipitation = float(_get_attr_value(item, "precipitation", 0))
         humidity = float(_get_attr_value(item, "humidity", 0))
         pressure = float(_get_attr_value(item, "atmosphericPressure", 1013))
-        location = str(_get_attr_value(item, "location", "unknown"))
+        coverage_radius_m = int(_get_attr_value(item, "coverage_radius_m", 300))
+
+        # Extract geo:json coordinates — value is {"type": "Point", "coordinates": [lon, lat]}
+        location_val = _get_attr_value(item, "location", {})
+        coordinates = None
+        location_str = "unknown"
+        if isinstance(location_val, dict) and location_val.get("type") == "Point":
+            coords = location_val.get("coordinates", [])
+            if len(coords) == 2:
+                coordinates = (coords[0], coords[1])  # (lon, lat)
+                location_str = f"{coords[1]},{coords[0]}"
+        elif isinstance(location_val, str):
+            location_str = location_val
 
         heavy_rain = precipitation > 0.50
         flood_risk = precipitation > 5.0 or pressure < 1005
@@ -53,8 +66,10 @@ def _notification_to_event(notification: Dict[str, Any]) -> MonitorEvent:
             heavy_rain=heavy_rain,
             flood_risk=flood_risk,
             crowd_level="high" if flood_risk else ("normal" if not heavy_rain else "dense"),
-            location=location,
+            location=location_str,
             notes=f"precipitation={precipitation}mm humidity={humidity}% pressure={pressure}hPa",
+            coordinates=coordinates,
+            coverage_radius_m=coverage_radius_m,
         )
 
     # --- TrafficSignal or generic event ---
@@ -78,6 +93,33 @@ async def handle_notification(payload: Dict[str, Any] = Body(...)) -> Dict[str, 
     trace_id = str(uuid.uuid4())
     with stage_timer("monitor", "monitor") as timing:
         event = _notification_to_event(payload)
+
+        # Resolve nearest pump via geo-query when flood risk detected
+        if event.flood_risk and event.coordinates:
+            lon, lat = event.coordinates
+            pump_entity = await get_nearest_pump(lon, lat, event.coverage_radius_m)
+            if pump_entity:
+                pump_orion_id = pump_entity.get("id", "")
+                event = event.model_copy(update={
+                    "pump_id": pump_orion_id.replace("PumpDevice:", "Pump:")
+                })
+                logger.info(
+                    "Nearest pump resolved via geo-query",
+                    extra={"traceId": trace_id, "extra_fields": {
+                        "pump_id": event.pump_id,
+                        "radius_m": event.coverage_radius_m,
+                        "coordinates": event.coordinates,
+                    }},
+                )
+            else:
+                logger.warning(
+                    "No available pump found within radius",
+                    extra={"traceId": trace_id, "extra_fields": {
+                        "radius_m": event.coverage_radius_m,
+                        "coordinates": event.coordinates,
+                    }},
+                )
+
         record_event(
             component="monitor",
             event_type="EVENT_RECEIVED",

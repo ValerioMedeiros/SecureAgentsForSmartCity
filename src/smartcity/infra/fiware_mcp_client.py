@@ -58,8 +58,17 @@ async def get_entities(
     attrs: str = None,
     limit: int = 20,
     offset: int = 0,
+    georel: str = None,
+    geometry: str = None,
+    coords: str = None,
 ) -> dict:
-    """Query entities from Orion."""
+    """Query entities from Orion, with optional geo-filter support.
+
+    Args:
+        georel: Geo relation (e.g. 'near;maxDistance:300', 'coveredBy').
+        geometry: Geometry type ('point', 'polygon', 'line').
+        coords: Coordinates string in 'lat,lon' order (e.g. '-5.79,-35.20').
+    """
     params: dict = {"limit": limit, "offset": offset}
     if entity_type:
         params["entity_type"] = entity_type
@@ -67,6 +76,12 @@ async def get_entities(
         params["query"] = query
     if attrs:
         params["attrs"] = attrs
+    if georel:
+        params["georel"] = georel
+    if geometry:
+        params["geometry"] = geometry
+    if coords:
+        params["coords"] = coords
     return await _call("get_entities", params)
 
 

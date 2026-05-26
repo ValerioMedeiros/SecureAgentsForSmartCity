@@ -38,6 +38,10 @@ class WeatherObserved(BaseModel):
     wind_speed: float = Field(default=False)
     location: str = Field(default="Avenue 1")
     notes: Optional[str] = None
+    # Geo context — populated by monitor for WeatherObserved events
+    coordinates: Optional[tuple] = Field(default=None)           # (lon, lat)
+    coverage_radius_m: int = Field(default=300)                  # search radius for nearest pump
+    pump_id: Optional[str] = Field(default=None)                 # resolved via geo-query
     timestamp: Optional[str] = None
 
 class MonitorEvent(BaseModel):
