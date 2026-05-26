@@ -87,7 +87,7 @@ class CandidatePlan(BaseModel):
     plan_id: str
     goal: str
     scenario: str
-    risk_level: RiskLevel
+    risk_level: Optional[RiskLevel] = None
     steps: List[PlanStep] = Field(min_length=1)
     approval: ApprovalRequest
     telemetry: Telemetry
@@ -105,7 +105,7 @@ class CandidatePlan(BaseModel):
 
 class PolicyDecision(BaseModel):
     allowed: bool
-    risk_level: RiskLevel
+    risk_level: Optional[RiskLevel] = None
     approval_mode: ApprovalMode
     reason: str
     source: str
