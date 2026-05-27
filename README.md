@@ -27,9 +27,10 @@ Research-oriented proof-of-concept implementing a minimal and explainable MAPE-K
 - Falls back to deterministic local rules if OPA is unavailable.
 - Entry point: `src/smartcity/core/policy_engine.py`.
 
-### Execute
-- Executes approved plan steps through MCP tools.
-- Entry point: `src/smartcity/core/executor.py`.
+### Security
+- Requests user token for approval when necessary
+- Entry point: `src/smartcity/core/security.py`.
+
 
 ### Knowledge/Audit
 - Structured JSON logs in stdout and file (`logs/traces.jsonl`).
@@ -38,7 +39,7 @@ Research-oriented proof-of-concept implementing a minimal and explainable MAPE-K
 
 ### Observability
 
-- Prometheus metrics exposed at `GET /metrics` on the monitor service (port 8010) and the MCP server (port 8000).
+- Prometheus metrics exposed at `GET /metrics` on the monitor service (port 8010).
 - Metrics include: `smartcity_plans_total`, `smartcity_policy_decisions_total`, `smartcity_executions_total`, `smartcity_mcp_calls_total`, `smartcity_errors_total`, and `smartcity_stage_duration_seconds` (histogram per stage/component for the `monitor`, `plan`, `policy`, `policy_opa`, `execute`, `mcp_call_server`, and `mcp_call_client` stages).
 - Audit query endpoints on the monitor service:
   - `GET /audit/entries?trace_id=&plan_id=&component=&event_type=&limit=`
@@ -58,7 +59,8 @@ Root-level Python files are kept as compatibility wrappers, so existing commands
 - `src/smartcity/core/executor.py` - policy-gated execution
 - `src/smartcity/infra/logging_utils.py` - JSON logging utilities
 - `src/smartcity/infra/ngsi_client.py` - NGSI-v2 entity and subscription helpers
-- `src/smartcity/services/mcp_server.py` - MCP API surface
+- `src/smartcity/infra/pump_mcp/server.py` - Pump MCP server
+- `src/smartcity/infra/pump_mcp_client.py` - Pump MCP client helpers
 - `src/smartcity/services/monitor.py` - monitor endpoint and event loop trigger
 - `src/smartcity/app/examples_llm_planner.py` - interactive planner examples (with optional execution)
 - `src/smartcity/app/host_simulator.py` - scenario runner (alternative, parametrized by SCENARIO env var)
@@ -76,60 +78,76 @@ Root-level Python files are kept as compatibility wrappers, so existing commands
 
 ### 1) One-time setup
 
+Create and activate a virtual environment and install the package (uses `pyproject.toml`):
+
 ```bash
-uv python install 3.11
-uv sync # Install uv for easier
+uv sync
+```
+
+or
+
+```powershell
+python -m venv .venv
+. .\.venv\Scripts\Activate.ps1
+pip install -e .
 ```
 
 ### 2) Start infrastructure
 
-```bash
-docker compose up -d
+Start all services with Docker Compose (will build images defined in `docker-compose.yml`):
+
+```powershell
+docker compose up -d --build
 ```
 
-### 3) Set environment variables on .env file (session)
+Wait until the MCP servers (pump/fiware/weather) and the monitor are healthy before proceeding.
 
-```bash
+### 4) Initialize MCP-backed resources (required)
+
+Before running scenarios or examples you MUST seed the pump and weather entities so the system can operate. Run these once after the infrastructure is up:
+
+```powershell
+# from project root (with venv activated)
+python -m src.smartcity.app.init_pumps
+python -m src.smartcity.app.init_weather_station
+```
+
+These scripts register pump endpoints and the weather station with the MCP/NGSI backends used by the executor and monitor.
+
+### 5) Set environment variables for a session
+
+Copy the example env and edit as needed:
+
+```powershell
 cp .env.example .env
 ```
 
-### 4) Run core flow (minimal)
+### 6) Run core flow
 
-Terminal 1 (MCP server):
-```bash
-uv run uvicorn src.smartcity.services.mcp_server:app --host 0.0.0.0 --port 8000
+Run the example planner:
+
+```powershell
+# Generate plans only
+python -m src.smartcity.app.examples_llm_planner
+
 ```
 
-Terminal 2 (Planner examples with execution):
-```bash
-$env:EXECUTE_PLANS="true"
-uv run -m src.smartcity.app.examples_llm_planner
-```
+When run interactively the `examples_llm_planner` module will prompt you to choose which example to run (1–4) or `a` to run all examples in order. Use the `EXECUTE_PLANS` environment variable to enable execution of generated plans.
 
-Or use the parametrized scenario runner:
-```bash
-$env:SCENARIO="A"
-uv run -m src.smartcity.app.host_simulator
-```
+### 7) Optional: dashboard, experiments
 
-Scenarios (for host_simulator or examples with specific events):
-- `A`: ambulance-only
-- `B`: flood-only
-- `C`: combined-flood-corridor
+```powershell
 
-### 5) Optional: monitor, dashboard, experiments
+streamlit run src/smartcity/ui/dashboard.py
+python -m src.smartcity.app.experiments
 
-```bash
-uv run uvicorn src.smartcity.services.monitor:app --host 0.0.0.0 --port 8010
-uv run streamlit run src/smartcity/ui/dashboard.py
-uv run -m src.smartcity.app.experiments
 ```
 
 ## Running Plans
 
 ### Option 1: Interactive Examples with Plan Execution
 
-The `examples_llm_planner.py` script demonstrates 4 planning scenarios and can optionally execute them:
+The `examples_llm_planner.py` script demonstrates 4 planning scenarios, prints the generated plan JSON, and can optionally execute them:
 
 ```bash
 # Generate plans only (no execution)
@@ -144,24 +162,6 @@ This is useful for:
 - Exploring plan generation across different event types
 - Testing policy decisions and approval flows
 - Verifying end-to-end execution in a controlled manner
-
-### Option 2: Parametrized Scenario Runner
-
-The `host_simulator.py` script runs a single scenario determined by the `SCENARIO` environment variable:
-
-```bash
-$env:SCENARIO="A"
-uv run -m src.smartcity.app.host_simulator
-```
-
-This is useful for:
-- Running specific predefined scenarios repeatably
-- Scripting scenario-based experiments
-- Integration with monitoring and log aggregation
-
-**Note:** Both scripts require the MCP server running on port 8000.
-
-**Note:** Root files are compatibility wrappers. Prefer `python -m src.smartcity...` and `uvicorn src.smartcity...` commands to avoid path/cwd issues.
 
 ## Plan Schema and Explainability
 
@@ -180,6 +180,28 @@ Implemented in Rego and fallback logic:
 - `high` -> `deny` -> red
 
 ## Notes for Evaluation
+
+## Authentication
+
+Authentication in this project is intentionally minimal and handled via environment
+variables and the operator UI:
+
+- **OPENAI_API_KEY**: required when `LLM_PLANNER_ENABLED=true`. Set this in your
+  `.env` file or environment; an example is provided in `.env.example`:
+  `OPENAI_API_KEY=sk-your-openai-api-key-here`.
+- **Human approvals**: operator decisions (for `human` approval mode) are
+  performed through the citizen-facing dashboard (`src/smartcity/services/citizen_interface.py`).
+  We made available de following users/tokens:
+  - admin: token123
+  - operator: token456
+  - viewer: token789
+- **MCP / service auth**: MCP servers run without token-based auth by default in
+  this repository. Production deployments should add transport-level security
+  (TLS, mTLS) or API tokens and configure the clients accordingly.
+
+Docker Compose wires the `OPENAI_API_KEY` into the `monitor` service; set it
+before `docker compose up` or copy `.env.example` to `.env` and edit as needed.
+
 
 The repository now supports the main experiment categories:
 

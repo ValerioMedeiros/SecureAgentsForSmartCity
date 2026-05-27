@@ -6,21 +6,26 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import Body, FastAPI, HTTPException, Query, Response
 
-from ..core.executor import execute_candidate_plan
-from ..core.models import MonitorEvent
-from ..core.planner import build_candidate_plan
+from ..core.models import MonitorEvent, WeatherObserved
+from ..core.weather_agent import run as run_weather_agent
 from ..infra.audit import read_entries, record_event, verify_chain
 from ..infra.logging_utils import configure_logger
 from ..infra.metrics import render_latest, stage_timer
 from ..infra.ngsi_client import create_subscription
+from ..infra.pump_mcp_client import get_nearest_pump
 
 logger = configure_logger("monitor")
 app = FastAPI(title="Monitor Service")
 
-MONITOR_CALLBACK_URL = os.getenv(
-    "MONITOR_CALLBACK_URL", "http://localhost:8010/monitor/notify"
-)
-TRAFFIC_SIGNAL_ID = os.getenv("TRAFFIC_SIGNAL_ID", "TrafficSignal:001")
+MONITOR_CALLBACK_URL = os.getenv("MONITOR_CALLBACK_URL", "http://localhost:8010/monitor/notify")
+
+
+def _get_attr_value(item: Dict[str, Any], key: str, default=None):
+    """Extract value from NGSI-v2 attribute (supports both {value: X} and raw scalar)."""
+    attr = item.get(key, default)
+    if isinstance(attr, dict):
+        return attr.get("value", default)
+    return attr if attr is not None else default
 
 
 def _notification_to_event(notification: Dict[str, Any]) -> MonitorEvent:
@@ -28,20 +33,45 @@ def _notification_to_event(notification: Dict[str, Any]) -> MonitorEvent:
     if not data:
         return MonitorEvent(event_type="empty")
 
-    item = data[0]
-    weather = str(item.get("weather", "normal")).lower()
-    crowd = str(item.get("crowd", "normal")).lower()
-    event_type = str(item.get("eventType", "combined")).lower()
+    observations: List[WeatherObserved] = []
+    for item in data:
+        entity_type = str(item.get("type", "")).lower()
+        if entity_type != "weatherobserved":
+            continue
 
-    return MonitorEvent(
-        event_type=event_type,
-        ambulance_detected=bool(item.get("ambulanceDetected", False)),
-        heavy_rain=weather in {"rain", "storm", "heavy_rain"},
-        flood_risk=bool(item.get("floodRisk", False)),
-        crowd_level=crowd,
-        location=str(item.get("location", "unknown")),
-        notes=str(item.get("notes", "")) or None,
-    )
+        precipitation = float(_get_attr_value(item, "precipitation", 0))
+        humidity = float(_get_attr_value(item, "humidity", 0))
+        pressure = float(_get_attr_value(item, "atmosphericPressure", 1013))
+        coverage_radius_m = int(_get_attr_value(item, "coverage_radius_m", 300))
+        station_id = str(item.get("id", "unknown"))
+
+        location_val = _get_attr_value(item, "location", {})
+        coordinates = None
+        location_str = "unknown"
+        if isinstance(location_val, dict) and location_val.get("type") == "Point":
+            coords = location_val.get("coordinates", [])
+            if len(coords) == 2:
+                coordinates = (coords[0], coords[1])  # (lon, lat)
+                location_str = f"{coords[1]},{coords[0]}"
+        elif isinstance(location_val, str):
+            location_str = location_val
+
+        observations.append(WeatherObserved(
+            event_type="weather",
+            station_id=station_id,
+            precipitation=precipitation,
+            humidity=humidity,
+            atmospheric_pressure=pressure,
+            location=location_str,
+            notes=f"precipitation={precipitation}mm humidity={humidity}% pressure={pressure}hPa",
+            coordinates=coordinates,
+            coverage_radius_m=coverage_radius_m,
+        ))
+
+    if not observations:
+        return MonitorEvent(event_type="unknown")
+
+    return MonitorEvent(event_type="weather", weather_observations=observations)
 
 
 @app.post("/monitor/notify")
@@ -49,6 +79,43 @@ async def handle_notification(payload: Dict[str, Any] = Body(...)) -> Dict[str, 
     trace_id = str(uuid.uuid4())
     with stage_timer("monitor", "monitor") as timing:
         event = _notification_to_event(payload)
+
+        # Enrich observations with forecast data and resolve nearest pump
+        resolved_observations = []
+        for obs in (event.weather_observations or []):
+            if obs.coordinates:
+                lon, lat = obs.coordinates
+
+                # Resolve nearest pump based on current precipitation threshold
+                should_resolve_pump = obs.precipitation > 0.50
+                if should_resolve_pump:
+                    pump_entity = await get_nearest_pump(lon, lat, obs.coverage_radius_m)
+                    if pump_entity:
+                        pump_id = pump_entity.get("id", "")
+                        obs = obs.model_copy(update={"pump_id": pump_id})
+                        logger.info(
+                            "Nearest pump resolved via geo-query",
+                            extra={"traceId": trace_id, "extra_fields": {
+                                "station_id": obs.station_id,
+                                "pump_id": pump_id,
+                                "radius_m": obs.coverage_radius_m,
+                                "coordinates": obs.coordinates,
+                            }},
+                        )
+                    else:
+                        logger.warning(
+                            "No available pump found within radius",
+                            extra={"traceId": trace_id, "extra_fields": {
+                                "station_id": obs.station_id,
+                                "radius_m": obs.coverage_radius_m,
+                                "coordinates": obs.coordinates,
+                            }},
+                        )
+            resolved_observations.append(obs)
+
+        if resolved_observations:
+            event = event.model_copy(update={"weather_observations": resolved_observations})
+
         record_event(
             component="monitor",
             event_type="EVENT_RECEIVED",
@@ -57,24 +124,20 @@ async def handle_notification(payload: Dict[str, Any] = Body(...)) -> Dict[str, 
             outcome=event.event_type,
             payload={
                 "event_type": event.event_type,
-                "ambulance_detected": event.ambulance_detected,
-                "heavy_rain": event.heavy_rain,
-                "flood_risk": event.flood_risk,
-                "crowd_level": event.crowd_level,
-                "location": event.location,
+                "observations": len(event.weather_observations or []),
                 "raw_keys": list(payload.keys()),
             },
         )
-        plan = build_candidate_plan(event, trace_id)
-        report = execute_candidate_plan(plan)
+        agent_result = await run_weather_agent(event, trace_id)
+
     logger.info(
-        "MAPE-K loop completed from monitor event",
+        "Weather Agent loop completed",
         extra={
             "traceId": trace_id,
             "extra_fields": {
                 "scenario": event.event_type,
-                "executed": report.executed,
-                "policy_mode": report.policy.approval_mode.value,
+                "source": agent_result.get("source"),
+                "tool_calls": agent_result.get("tool_calls", []),
                 "duration_ms": timing["duration_ms"],
             },
         },
@@ -83,22 +146,20 @@ async def handle_notification(payload: Dict[str, Any] = Body(...)) -> Dict[str, 
         component="monitor",
         event_type="LOOP_COMPLETED",
         trace_id=trace_id,
-        plan_id=report.plan_id,
         actor="monitor",
-        outcome="executed" if report.executed else "not_executed",
+        outcome="completed",
         payload={
             "scenario": event.event_type,
-            "executed": report.executed,
-            "policy_mode": report.policy.approval_mode.value,
-            "risk_level": report.policy.risk_level.value,
+            "source": agent_result.get("source"),
+            "tool_calls": agent_result.get("tool_calls", []),
             "duration_ms": timing["duration_ms"],
         },
     )
     return {
         "traceId": trace_id,
-        "planId": report.plan_id,
-        "executed": report.executed,
-        "policy": report.policy.model_dump(),
+        "source": agent_result.get("source"),
+        "tool_calls": agent_result.get("tool_calls", []),
+        "summary": agent_result.get("summary", ""),
     }
 
 
@@ -142,15 +203,15 @@ def audit_verify() -> Dict[str, Any]:
 def register_default_subscription() -> Dict[str, Any]:
     trace_id = str(uuid.uuid4())
     subscription = {
-        "description": "Monitor traffic/weather events",
+        "description": "Monitor WeatherObserved events",
         "subject": {
-            "entities": [{"id": TRAFFIC_SIGNAL_ID, "type": "TrafficSignal"}],
-            "condition": {"attrs": ["status", "priorityCorridor"]},
+            "entities": [{"idPattern": "WeatherStation:.*", "type": "WeatherObserved"}],
+            "condition": {"attrs": ["precipitation", "humidity", "atmosphericPressure"]},
         },
         "notification": {
             "http": {"url": MONITOR_CALLBACK_URL},
-            "attrs": ["status", "priorityCorridor", "location"],
+            "attrs": ["precipitation", "humidity", "atmosphericPressure", "location", "coverage_radius_m"],
         },
-        "throttling": 1,
+        "throttling": 5,
     }
     return create_subscription(subscription, trace_id)

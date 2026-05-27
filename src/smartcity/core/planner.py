@@ -23,15 +23,52 @@ load_dotenv()
 
 logger = configure_logger("planner")
 
-TRAFFIC_SIGNAL_ID = os.getenv("TRAFFIC_SIGNAL_ID", "TrafficSignal:001")
+PUMP_ENTITY_ID = os.getenv("PUMP_ENTITY_ID", "PumpStation:001")
+
+
+_FORECAST_RISK_MAP: dict[str, RiskLevel] = {
+    "crítico": RiskLevel.HIGH,
+    "alto": RiskLevel.HIGH,
+    "médio": RiskLevel.MEDIUM,
+    "baixo": RiskLevel.LOW,
+}
+
+_RISK_RANK: dict[RiskLevel, int] = {
+    RiskLevel.LOW: 0,
+    RiskLevel.MEDIUM: 1,
+    RiskLevel.HIGH: 2,
+}
+
+
+def _escalate(current: RiskLevel, candidate: RiskLevel) -> RiskLevel:
+    return candidate if _RISK_RANK[candidate] > _RISK_RANK[current] else current
 
 
 def _risk_from_event(event: MonitorEvent) -> RiskLevel:
-    if event.flood_risk:
+    et = (event.event_type or "").lower()
+
+    if "flood" in et:
         return RiskLevel.HIGH
-    if event.heavy_rain or event.crowd_level.lower() in {"high", "dense"}:
-        return RiskLevel.MEDIUM
-    return RiskLevel.LOW
+
+    risk = RiskLevel.MEDIUM if "pump" in et else RiskLevel.LOW
+
+    for obs in (event.weather_observations or []):
+        # Forecast-based risk takes priority when available
+        forecast_risk = _FORECAST_RISK_MAP.get(getattr(obs, "rainfall_risk", None) or "")
+        if forecast_risk:
+            risk = _escalate(risk, forecast_risk)
+
+        # Fallback: current precipitation thresholds
+        try:
+            precip = float(getattr(obs, "precipitation", 0) or 0)
+            if precip > 50:
+                risk = _escalate(risk, RiskLevel.HIGH)
+            elif precip > 30:
+                risk = _escalate(risk, RiskLevel.MEDIUM)
+        except Exception:
+            continue
+
+    return risk
 
 
 def _approval_level(risk_level: RiskLevel) -> int:
@@ -43,48 +80,41 @@ def _approval_level(risk_level: RiskLevel) -> int:
 
 
 def _build_rule_based_plan(event: MonitorEvent, trace_id: str) -> Dict[str, Any]:
+    """Build a simple rule-based pump/flood plan based on the event."""
     risk_level = _risk_from_event(event)
     autonomy_level = _approval_level(risk_level)
 
-    if event.ambulance_detected:
-        corridor_value = "emergency"
-        goal = "Create emergency corridor for ambulance"
-        scenario = "ambulance-only"
-        message = "Emergency corridor activated for ambulance"
-    elif event.flood_risk or event.heavy_rain:
-        corridor_value = "critical-infra"
-        goal = "Protect critical infrastructure under weather stress"
-        scenario = "flood-only"
-        message = "Weather response rerouting activated"
-    else:
-        corridor_value = "none"
-        goal = "Maintain normal traffic operation"
-        scenario = "baseline"
-        message = "Traffic remains in normal mode"
+    et = (event.event_type or "").lower()
 
-    if event.ambulance_detected and (event.heavy_rain or event.flood_risk):
-        scenario = "combined-flood-corridor"
-        goal = "Coordinate emergency corridor with weather risk mitigation"
-        corridor_value = "emergency"
-        message = "Combined emergency and weather protocol activated"
-
+    # Default plan values
+    goal = "Maintain normal infrastructure operation"
+    scenario = "baseline"
+    message = "No immediate pump actions required"
     steps = [
         {
-            "id": "read-state",
-            "action": ActionType.GET_TRAFFIC_SIGNAL_STATE.value,
-            "params": {"entity_id": TRAFFIC_SIGNAL_ID},
-        },
-        {
-            "id": "set-priority",
-            "action": ActionType.SET_PRIORITY_CORRIDOR.value,
-            "params": {"entity_id": TRAFFIC_SIGNAL_ID, "value": corridor_value},
-        },
-        {
             "id": "notify",
-            "action": ActionType.NOTIFY_TRAFFIC_AGENTS.value,
-            "params": {"message": message},
-        },
+            "action": ActionType.NOTIFY_USER.value,
+            "params": {
+                "message": "Monitoring normal conditions",
+                "user_id": "ops-team",
+            },
+        }
     ]
+
+    # If any weather observation has a resolved pump, add pump actuation steps
+    for obs in (event.weather_observations or []):
+        pump_id = getattr(obs, "pump_id", None)
+        precipitation = float(getattr(obs, "precipitation", 0) or 0)
+        if pump_id and precipitation > 0.50:
+            goal = "Activate pump in response to weather alert"
+            scenario = "flood-response"
+            steps += [
+                {
+                    "id": f"activate-pump-{pump_id}",
+                    "action": ActionType.TURN_ON_PUMP.value,
+                    "params": {"entity_id": pump_id},
+                },
+            ]
 
     return {
         "plan_id": str(uuid.uuid4()),
@@ -137,6 +167,7 @@ def build_candidate_plan(event: MonitorEvent, trace_id: str) -> CandidatePlan:
             "traceId": trace_id,
             "extra_fields": {
                 "plan_id": plan.plan_id,
+                "goal": plan.goal,
                 "scenario": plan.scenario,
                 "risk_level": plan.risk_level.value,
                 "autonomy_level": plan.approval.autonomy_level,
@@ -162,14 +193,7 @@ def build_candidate_plan(event: MonitorEvent, trace_id: str) -> CandidatePlan:
                 for s in plan.steps
             ],
             "duration_ms": timing["duration_ms"],
-            "event": {
-                "event_type": event.event_type,
-                "ambulance_detected": event.ambulance_detected,
-                "heavy_rain": event.heavy_rain,
-                "flood_risk": event.flood_risk,
-                "crowd_level": event.crowd_level,
-                "location": event.location,
-            },
+            "event": event.model_dump(),
         },
     )
     return plan
@@ -187,8 +211,8 @@ def malformed_plan_fixture(trace_id: str) -> Dict[str, Any]:
         "steps": [
             {
                 "id": "bad-step",
-                "action": "setPriorityCorridor",
-                "params": {"entity_id": TRAFFIC_SIGNAL_ID},
+                "action": "turnOnPump",
+                "params": {"entity_id": PUMP_ENTITY_ID},
             }
         ],
         "approval": {"autonomy_level": 3},

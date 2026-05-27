@@ -1,21 +1,33 @@
 services:
-  orion:
-    image: fiware/orion:3.10.1
-    container_name: fiware-orion
-    depends_on:
-      - mongo
-    ports:
-      - "1026:1026"
-    command: -dbhost mongo -logLevel DEBUG
-    environment:
-      - ORION_LOG_FOR_HUMANS=false
   mongo:
     image: mongo:7.0
-    container_name: fiware-mongo
+    container_name: smartcity-mongo
     ports:
       - "27017:27017"
     volumes:
       - mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  orion:
+    image: fiware/orion:3.10.1
+    container_name: smartcity-orion
+    depends_on:
+      mongo:
+        condition: service_healthy
+    ports:
+      - "1026:1026"
+    entrypoint: ["/bin/sh", "-c", "rm -f /tmp/contextBroker.pid && exec /usr/bin/contextBroker -dbhost mongo -logLevel DEBUG -fg"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:1026/version"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
   opa:
     image: openpolicyagent/opa:0.68.0
     container_name: smartcity-opa
@@ -29,5 +41,74 @@ services:
       - "8181:8181"
     volumes:
       - ./policies:/policies:ro
+
+  fiware-mcp:
+    build:
+      context: .
+      dockerfile: Dockerfile.fiware-mcp
+    container_name: smartcity-fiware-mcp
+    depends_on:
+      orion:
+        condition: service_started
+    ports:
+      - "8001:8001"
+    environment:
+      - ORION_BASE_URL=http://orion:1026
+      - ORION_FIWARE_SERVICE=openiot
+      - ORION_FIWARE_SERVICE_PATH=/
+    restart: unless-stopped
+
+  pump-mcp:
+    build:
+      context: .
+      dockerfile: Dockerfile.pump-mcp
+    container_name: smartcity-pump-mcp
+    ports:
+      - "8002:8002"
+    restart: unless-stopped
+
+  weather-mcp:
+    build:
+      context: .
+      dockerfile: Dockerfile.weather-mcp
+    container_name: smartcity-weather-mcp
+    ports:
+      - "8003:8003"
+    restart: unless-stopped
+
+  citizen-interface:
+    build:
+      context: .
+      dockerfile: Dockerfile.citizen-interface
+    container_name: smartcity-citizen-interface
+    ports:
+      - "8020:8020"
+    restart: unless-stopped
+
+  monitor:
+    build:
+      context: .
+      dockerfile: Dockerfile.monitor
+    container_name: smartcity-monitor
+    depends_on:
+      - fiware-mcp
+      - pump-mcp
+      - weather-mcp
+      - citizen-interface
+      - opa
+    ports:
+      - "8010:8010"
+    environment:
+      - MONITOR_CALLBACK_URL=http://monitor:8010/monitor/notify
+      - FIWARE_MCP_URL=http://fiware-mcp:8001/mcp
+      - PUMP_MCP_URL=http://pump-mcp:8002/mcp
+      - WEATHER_MCP_URL=http://weather-mcp:8003/mcp
+      - OPA_URL=http://opa:8181
+      - CITIZEN_INTERFACE_URL=http://citizen-interface:8020
+      - LLM_AGENT_ENABLED=true
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o-mini}
+    restart: unless-stopped
+
 volumes:
   mongo_data:

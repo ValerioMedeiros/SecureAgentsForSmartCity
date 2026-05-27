@@ -3,7 +3,7 @@ name = "secure-agents-for-smart-city"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.11, <3.12"
+requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.111.0",
     "langchain==1.2.0",
@@ -15,4 +15,10 @@ dependencies = [
     "requests==2.32.3",
     "streamlit>=1.50.0",
     "uvicorn>=0.30.1",
+    "fastmcp>=0.3.0",
 ]
+
+[project.scripts]
+fiware-mcp-server = "smartcity.infra.fiware_mcp.server:main"
+pump-mcp-server = "smartcity.infra.pump_mcp.server:main"
+weather-mcp-server = "smartcity.infra.weather_mcp.server:main"

@@ -1,187 +1,214 @@
-"""LLM-based planner using LangChain for intelligent traffic management planning."""
+"""LLM-based planner using LangChain for intelligent pump/flood management planning."""
 
 from __future__ import annotations
 
 import json
 import os
+import re
+import uuid
 from typing import Any, Dict, Optional
 
 from dotenv import load_dotenv
-# Handle optional LangChain imports
-try:
-    from langchain_core.prompts import PromptTemplate
-    from langchain_openai import ChatOpenAI
-
-    LANGCHAIN_AVAILABLE = True
-except ImportError:
-    LANGCHAIN_AVAILABLE = False
-
-    class PromptTemplate:
-        """Dummy PromptTemplate for when LangChain is not installed."""
-
-        def __init__(self, *args, **kwargs):
-            pass
-
-        def format(self, **kwargs):
-            return ""
-
-    class ChatOpenAI:
-        """Dummy ChatOpenAI for when LangChain is not installed."""
-
-        def __init__(self, *args, **kwargs):
-            pass
-
-        def invoke(self, prompt):
-            return None
-
+from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.prompts import PromptTemplate
+from langchain_openai import ChatOpenAI
 
 from ..infra.logging_utils import configure_logger
-from .models import ActionType, MonitorEvent, RiskLevel, validate_plan_dict # type: ignore  # noqa: F401
+from .models import ActionType, MonitorEvent, validate_plan_dict  # noqa: F401
 
 load_dotenv()
 
 logger = configure_logger("llm_planner")
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4-turbo")
-TRAFFIC_SIGNAL_ID = os.getenv("TRAFFIC_SIGNAL_ID", "TrafficSignal:001")
-LLM_PLANNER_ENABLED = os.getenv("LLM_PLANNER_ENABLED", "false").lower() == "true"
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+LLM_PLANNER_ENABLED = os.getenv("LLM_PLANNER_ENABLED", "true").lower() == "true"
 LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.3"))
 
+# Regex patterns for PII masking before logging
+_PII_PATTERNS = [
+    (re.compile(r"\btoken\s*[:=]\s*\S+", re.IGNORECASE), "token: [REDACTED]"),
+    (re.compile(r"\bpassword\s*[:=]\s*\S+", re.IGNORECASE), "password: [REDACTED]"),
+    (re.compile(r"\bapi[_-]?key\s*[:=]\s*\S+", re.IGNORECASE), "api_key: [REDACTED]"),
+]
 
 PLAN_GENERATION_PROMPT = PromptTemplate(
-    input_variables=["event_data", "available_actions", "schema_example"],
-    template="""You are an intelligent traffic management planner for a smart city system.
-Your task is to generate a traffic management plan in response to a monitoring event.
+    input_variables=["event_data", "available_actions", "available_pumps", "schema_example", "weather_forecast"],
+    template="""You are an intelligent pump management planner for a smart city system.
+Your task is to generate a pump management plan in response to a monitoring event.
 
 ## Event Data
 {event_data}
 
+## Weather Forecast (próximas horas)
+{weather_forecast}
+
 ## Available Actions
 {available_actions}
+
+## Available Pumps
+{available_pumps}
 
 ## Plan Schema (REQUIRED - must match exactly)
 {schema_example}
 
 ## Instructions
-1. Analyze the event and determine the appropriate response
+1. Analyze the event and the weather forecast to determine the appropriate response
 2. Generate a sequence of actionable steps
 3. Return ONLY valid JSON matching the schema above
-4. Set risk_level based on event severity:
-   - LOW: normal conditions, light rain
-   - MEDIUM: heavy rain, moderate crowd
-   - HIGH: flood risk, ambulance detected
-5. Set autonomy_level:
-   - 1 for LOW risk (auto-approve)
-   - 2 for MEDIUM risk (human review)
-   - 3 for HIGH risk (human review required)
-6. Use realistic goal and scenario descriptions
-7. Always include exactly 3 steps: read-state, set-priority, notify
+4. Set risk_level based on event severity AND forecast:
+   - LOW: normal conditions, light rain, forecast risco=baixo
+   - MEDIUM: heavy rain, moderate wind, forecast risco=médio
+   - HIGH: flood risk, heavy winds, forecast risco=alto or crítico
+5. If forecast indicates alto or crítico risk, activate pumps preventively even if current precipitation is low
+6. Use realistic goal and scenario descriptions based on the event context
+7. If a pump is failing, include steps to turn it off and notify maintenance
 
 ## Output
 Return ONLY the JSON plan, no explanation or markdown:
 """,
 )
 
+SAFETY_CHECK_PROMPT = PromptTemplate(
+    input_variables=["plan_json"],
+    template="""You are a safety reviewer for a smart city pump management system.
+Evaluate if the following plan is safe and appropriate to execute.
+A plan is UNSAFE if it: activates pumps without flood context, contains contradictory steps,
+or could cause infrastructure damage.
+
+Plan:
+{plan_json}
+
+Respond with only 'SAFE' or 'UNSAFE' followed by a brief reason (max 20 words).""",
+)
+
+
+def _mask_pii(text: str) -> str:
+    """Apply regex-based PII masking before logging."""
+    for pattern, replacement in _PII_PATTERNS:
+        text = pattern.sub(replacement, text)
+    return text
+
+
+def _build_forecast_context(event: MonitorEvent) -> str:
+    """Serializes weather forecast fields from observations into a readable string for the LLM."""
+    lines = []
+    for obs in (event.weather_observations or []):
+        if obs.rainfall_risk or obs.forecast_precipitation_mm is not None:
+            lines.append(
+                f"- Estação {obs.station_id}: risco={obs.rainfall_risk or 'desconhecido'}, "
+                f"precipitação prevista={obs.forecast_precipitation_mm or 0:.1f}mm "
+                f"nas próximas {obs.forecast_hours or 6}h"
+            )
+    return "\n".join(lines) if lines else "Dados de previsão não disponíveis."
+
 
 def _get_available_actions_description() -> str:
-    """Generate description of available actions for the LLM."""
     return f"""
-1. {ActionType.GET_TRAFFIC_SIGNAL_STATE.value}
-   - Reads current state of traffic signal
+1. {ActionType.TURN_ON_PUMP.value}
+   - Turns on a pump to drain floodwater
    - Required params: entity_id (string)
-   
-2. {ActionType.SET_PRIORITY_CORRIDOR.value}
-   - Sets priority corridor mode
-   - Required params: entity_id (string), value (enum: "emergency", "critical-infra", "none")
-   
-3. {ActionType.NOTIFY_TRAFFIC_AGENTS.value}
-   - Notifies traffic agents of situation
-   - Required params: message (string)
+
+2. {ActionType.TURN_OFF_PUMP.value}
+   - Turns off a pump
+   - Required params: entity_id (string)
+
+3. {ActionType.NOTIFY_USER.value}
+   - Notifies an operator or team
+   - Required params: message (string), user_id (string)
 """
 
 
 def _get_schema_example() -> str:
-    """Generate example of plan schema for the LLM."""
     return json.dumps(
         {
             "plan_id": "uuid-will-be-generated",
-            "goal": "Create emergency corridor for ambulance",
-            "scenario": "ambulance-only",
+            "goal": "Prevent basement flooding on Avenue 1",
+            "scenario": "heavy-precipitation",
             "risk_level": "high",
             "steps": [
                 {
-                    "id": "read-state",
-                    "action": ActionType.GET_TRAFFIC_SIGNAL_STATE.value,
-                    "params": {"entity_id": TRAFFIC_SIGNAL_ID},
+                    "id": "turn-on-pump-1",
+                    "action": ActionType.TURN_ON_PUMP.value,
+                    "params": {"entity_id": "Pump:001"},
                 },
                 {
-                    "id": "set-priority",
-                    "action": ActionType.SET_PRIORITY_CORRIDOR.value,
-                    "params": {"entity_id": TRAFFIC_SIGNAL_ID, "value": "emergency"},
-                },
-                {
-                    "id": "notify",
-                    "action": ActionType.NOTIFY_TRAFFIC_AGENTS.value,
-                    "params": {"message": "Emergency corridor activated for ambulance"},
+                    "id": "notify-owner",
+                    "action": ActionType.NOTIFY_USER.value,
+                    "params": {
+                        "message": "Pumps activated due to heavy precipitation",
+                        "user_id": "ops-team",
+                    },
                 },
             ],
-            "approval": {"autonomy_level": 3},
+            "approval": {"autonomy_level": 2},
             "telemetry": {"traceId": "will-be-injected"},
         },
         indent=2,
     )
 
 
+def _safety_check(plan_json: str, llm: ChatOpenAI, trace_id: str) -> bool:
+    """
+    Guardrail: use a lightweight LLM call to evaluate plan safety.
+    Returns True if SAFE, False if UNSAFE.
+    """
+    try:
+        prompt = SAFETY_CHECK_PROMPT.format(plan_json=plan_json)
+        response = llm.invoke([HumanMessage(content=prompt)])
+        verdict = response.content.strip().upper()
+        is_safe = verdict.startswith("SAFE")
+        if not is_safe:
+            logger.warning(
+                "Safety guardrail blocked LLM plan",
+                extra={"traceId": trace_id, "verdict": verdict[:100]},
+            )
+        return is_safe
+    except Exception as exc:
+        logger.warning(
+            "Safety guardrail check failed, defaulting to safe",
+            extra={"traceId": trace_id, "error": str(exc)},
+        )
+        return True
+
+
 def _get_llm_client() -> Optional[ChatOpenAI]:
     """Initialize LangChain ChatOpenAI client if API key is available."""
-    if not LANGCHAIN_AVAILABLE:
-        logger.warning("LangChain not installed; LLM planner unavailable")
-        return None
-
     if not OPENAI_API_KEY:
         logger.warning("OPENAI_API_KEY not set; LLM planner unavailable")
         return None
-
     try:
         return ChatOpenAI(
             api_key=OPENAI_API_KEY,
             model=OPENAI_MODEL,
             temperature=LLM_TEMPERATURE,
         )
-    except Exception as e:
-        logger.error(
-            "Failed to initialize ChatOpenAI client",
-            extra={"error": str(e)},
-        )
+    except Exception as exc:
+        logger.error("Failed to initialize ChatOpenAI client", extra={"error": str(exc)})
         return None
 
 
 def _parse_llm_response(response_text: str, trace_id: str) -> Optional[Dict[str, Any]]:
     """Extract and validate JSON from LLM response."""
     try:
-        # Try to parse the response as JSON
-        response_text = response_text.strip()
-        if response_text.startswith("```json"):
-            response_text = response_text[7:]
-        if response_text.startswith("```"):
-            response_text = response_text[3:]
-        if response_text.endswith("```"):
-            response_text = response_text[:-3]
+        text = response_text.strip()
+        if text.startswith("```json"):
+            text = text[7:]
+        if text.startswith("```"):
+            text = text[3:]
+        if text.endswith("```"):
+            text = text[:-3]
 
-        plan_data = json.loads(response_text.strip())
-        logger.debug(
-            "LLM response parsed successfully",
-            extra={"traceId": trace_id, "plan_data": plan_data},
-        )
+        plan_data = json.loads(text.strip())
+        logger.debug("LLM response parsed successfully", extra={"traceId": trace_id})
         return plan_data
-    except json.JSONDecodeError as e:
+    except json.JSONDecodeError as exc:
         logger.warning(
             "Failed to parse LLM response as JSON",
             extra={
                 "traceId": trace_id,
-                "error": str(e),
-                "response": response_text[:200],
+                "error": str(exc),
+                "response": _mask_pii(response_text[:200]),
             },
         )
         return None
@@ -191,23 +218,17 @@ def generate_plan_with_llm(
     event: MonitorEvent, trace_id: str
 ) -> Optional[Dict[str, Any]]:
     """
-    Generate a traffic management plan using LangChain LLM.
+    Generate a pump management plan using a LangChain LLM chain.
 
-    Args:
-        event: Monitoring event containing traffic and weather conditions
-        trace_id: Trace ID for logging and telemetry
+    Flow:
+      1. Format prompt with event data
+      2. Invoke ChatOpenAI to generate a JSON plan
+      3. Run safety guardrail (second LLM call) to validate the plan
+      4. Parse and validate against the CandidatePlan schema
 
-    Returns:
-        Dictionary representing the candidate plan, or None if generation fails
+    Returns the plan dict or None if generation/validation fails.
     """
     if not LLM_PLANNER_ENABLED:
-        return None
-
-    if not LANGCHAIN_AVAILABLE:
-        logger.debug(
-            "LangChain not available; LLM planner disabled",
-            extra={"traceId": trace_id},
-        )
         return None
 
     llm = _get_llm_client()
@@ -215,28 +236,14 @@ def generate_plan_with_llm(
         return None
 
     try:
-        # Prepare prompt inputs
-        event_data = json.dumps(
-            {
-                "event_type": event.event_type,
-                "ambulance_detected": event.ambulance_detected,
-                "heavy_rain": event.heavy_rain,
-                "flood_risk": event.flood_risk,
-                "crowd_level": event.crowd_level,
-                "location": event.location,
-                "notes": event.notes,
-            },
-            indent=2,
-        )
+        event_data = json.dumps(event.model_dump(by_alias=True), indent=2)
 
-        available_actions = _get_available_actions_description()
-        schema_example = _get_schema_example()
-
-        # Build and invoke the chain
-        prompt = PLAN_GENERATION_PROMPT.format(
-            event_data=event_data,
-            available_actions=available_actions,
-            schema_example=schema_example,
+        prompt_text = PLAN_GENERATION_PROMPT.format(
+            event_data=_mask_pii(event_data),
+            available_actions=_get_available_actions_description(),
+            available_pumps="PumpDevice:001, PumpDevice:002",
+            schema_example=_get_schema_example(),
+            weather_forecast=_build_forecast_context(event),
         )
 
         logger.debug(
@@ -244,7 +251,7 @@ def generate_plan_with_llm(
             extra={"traceId": trace_id, "model": OPENAI_MODEL},
         )
 
-        response = llm.invoke(prompt)
+        response: AIMessage = llm.invoke([HumanMessage(content=prompt_text)])
         response_text = response.content
 
         logger.debug(
@@ -252,41 +259,39 @@ def generate_plan_with_llm(
             extra={"traceId": trace_id, "response_length": len(response_text)},
         )
 
-        # Parse and validate response
+        if not _safety_check(response_text, llm, trace_id):
+            return None
+
         plan_data = _parse_llm_response(response_text, trace_id)
         if not plan_data:
             return None
-
-        # Inject trace ID and set plan_id
-        import uuid
 
         plan_data.setdefault("plan_id", str(uuid.uuid4()))
         plan_data.setdefault("telemetry", {})
         plan_data["telemetry"]["traceId"] = trace_id
 
-        # Validate against schema
         try:
-            validated_plan = validate_plan_dict(plan_data)
+            validated = validate_plan_dict(plan_data)
             logger.info(
-                "LLM plan generated and validated successfully",
+                "LLM plan generated and validated",
                 extra={
                     "traceId": trace_id,
-                    "plan_id": validated_plan.plan_id,
-                    "scenario": validated_plan.scenario,
-                    "risk_level": validated_plan.risk_level.value,
+                    "plan_id": validated.plan_id,
+                    "scenario": validated.scenario,
+                    "risk_level": validated.risk_level.value,
                 },
             )
             return plan_data
-        except ValueError as e:
+        except ValueError as exc:
             logger.warning(
-                "Generated plan failed validation",
-                extra={"traceId": trace_id, "error": str(e)},
+                "LLM plan failed schema validation",
+                extra={"traceId": trace_id, "error": str(exc)},
             )
             return None
 
-    except Exception as e:
+    except Exception as exc:
         logger.error(
             "Error during LLM plan generation",
-            extra={"traceId": trace_id, "error": str(e)},
+            extra={"traceId": trace_id, "error": str(exc)},
         )
         return None

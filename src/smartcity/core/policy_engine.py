@@ -15,14 +15,12 @@ from ..infra.metrics import (
     POLICY_DECISIONS_TOTAL,
     stage_timer,
 )
-from .models import ApprovalMode, CandidatePlan, PolicyDecision, RiskLevel
+from .models import ActionType, ApprovalMode, CandidatePlan, PolicyDecision, RiskLevel
 
 load_dotenv()
 
 logger = configure_logger("policy_engine")
 
-USER_TOKEN = os.getenv("USER_TOKEN", "user-token")
-HUMAN_APPROVAL_TOKEN = os.getenv("HUMAN_APPROVAL_TOKEN", "human-approval-token")
 OPA_URL = os.getenv("OPA_URL", "").strip()
 OPA_POLICY_PATH = os.getenv("OPA_POLICY_PATH", "v1/data/smartcity/allow")
 OPA_TIMEOUT_SECONDS = float(os.getenv("OPA_TIMEOUT_SECONDS", "1.5"))
@@ -36,46 +34,33 @@ def _color_for_mode(mode: ApprovalMode) -> str:
     return "red"
 
 
-def _fallback_policy(plan: CandidatePlan, provided_token: str) -> PolicyDecision:
-    if provided_token != USER_TOKEN:
-        return PolicyDecision(
-            allowed=False,
-            risk_level=plan.risk_level,
-            approval_mode=ApprovalMode.DENY,
-            verdict_color="red",
-            reason="Invalid user token",
-            source="fallback",
-        )
-
-    if plan.risk_level == RiskLevel.LOW:
-        mode = ApprovalMode.AUTO
-        allowed = True
-        reason = "Low risk plan auto-approved"
-    elif plan.risk_level == RiskLevel.MEDIUM:
-        mode = ApprovalMode.HUMAN
-        if plan.approval.human_token == HUMAN_APPROVAL_TOKEN:
-            allowed = True
-            reason = "Medium risk approved with human token"
-        else:
+def _fallback_policy(plan: CandidatePlan) -> PolicyDecision:
+    # If plan only has low risk steps, allow with auto-approval; otherwise require human approval
+    allowed = True
+    mode = ApprovalMode.AUTO
+    risk_level = RiskLevel.LOW
+    reason = "Plan allowed by fallback policy"
+    for step in plan.steps:
+        if step.action == ActionType.NOTIFY_USER:
+            continue
+        if step.action in {ActionType.TURN_OFF_PUMP, ActionType.TURN_ON_PUMP}:
+            mode = ApprovalMode.HUMAN
             allowed = False
-            reason = "Medium risk requires human approval token"
-    else:
-        mode = ApprovalMode.DENY
-        allowed = False
-        reason = "High risk denied by policy"
+            risk_level = RiskLevel.MEDIUM
+            reason = "Plan includes pump control actions, requires human approval"
+            break
 
     return PolicyDecision(
         allowed=allowed,
-        risk_level=plan.risk_level,
+        risk_level=risk_level,
         approval_mode=mode,
-        verdict_color=_color_for_mode(mode),
         reason=reason,
         source="fallback",
     )
 
 
 def _opa_policy(
-    plan: CandidatePlan, provided_token: str, trace_id: str
+    plan: CandidatePlan,
 ) -> PolicyDecision:
     if not OPA_URL:
         raise RuntimeError("OPA_URL not configured")
@@ -84,9 +69,6 @@ def _opa_policy(
     payload = {
         "input": {
             "plan": plan.to_wire_dict(),
-            "token": provided_token,
-            "expected_user_token": USER_TOKEN,
-            "expected_human_token": HUMAN_APPROVAL_TOKEN,
         }
     }
     with stage_timer("policy_opa", "opa"):
@@ -100,20 +82,19 @@ def _opa_policy(
         allowed=bool(result.get("allowed", False)),
         risk_level=RiskLevel(result.get("risk_level", plan.risk_level.value)),
         approval_mode=mode,
-        verdict_color=result.get("verdict_color", _color_for_mode(mode)),
         reason=result.get("reason", "Policy decision returned by OPA"),
         source="opa",
     )
 
 
 def evaluate_plan(
-    plan: Dict[str, Any], provided_token: str, trace_id: str
+    plan: Dict[str, Any], trace_id: str
 ) -> PolicyDecision:
     validated_plan = CandidatePlan.model_validate(plan)
 
     with stage_timer("policy", "policy_engine") as timing:
         try:
-            decision = _opa_policy(validated_plan, provided_token, trace_id)
+            decision = _opa_policy(validated_plan)
         except Exception as exc:  # pragma: no cover - network path
             ERRORS_TOTAL.labels(component="opa", kind="opa_unavailable").inc()
             logger.warning(
@@ -123,7 +104,7 @@ def evaluate_plan(
                     "extra_fields": {"error": str(exc)},
                 },
             )
-            decision = _fallback_policy(validated_plan, provided_token)
+            decision = _fallback_policy(validated_plan)
 
     POLICY_DECISIONS_TOTAL.labels(
         approval_mode=decision.approval_mode.value,
@@ -136,7 +117,10 @@ def evaluate_plan(
         "Policy evaluated",
         extra={
             "traceId": trace_id,
-            "extra_fields": {**decision.model_dump(), "duration_ms": timing["duration_ms"]},
+            "extra_fields": {
+                **decision.model_dump(),
+                "duration_ms": timing["duration_ms"],
+            },
         },
     )
     record_event(
@@ -150,7 +134,6 @@ def evaluate_plan(
             "allowed": decision.allowed,
             "approval_mode": decision.approval_mode.value,
             "risk_level": decision.risk_level.value,
-            "verdict_color": decision.verdict_color,
             "reason": decision.reason,
             "duration_ms": timing["duration_ms"],
         },
