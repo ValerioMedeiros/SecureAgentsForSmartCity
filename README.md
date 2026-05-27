@@ -27,9 +27,10 @@ Research-oriented proof-of-concept implementing a minimal and explainable MAPE-K
 - Falls back to deterministic local rules if OPA is unavailable.
 - Entry point: `src/smartcity/core/policy_engine.py`.
 
-### Execute
-- Executes approved plan steps through the Pump MCP server.
-- Entry point: `src/smartcity/core/executor.py`.
+### Security
+- Requests user token for approval when necessary
+- Entry point: `src/smartcity/core/security.py`.
+
 
 ### Knowledge/Audit
 - Structured JSON logs in stdout and file (`logs/traces.jsonl`).
@@ -179,6 +180,28 @@ Implemented in Rego and fallback logic:
 - `high` -> `deny` -> red
 
 ## Notes for Evaluation
+
+## Authentication
+
+Authentication in this project is intentionally minimal and handled via environment
+variables and the operator UI:
+
+- **OPENAI_API_KEY**: required when `LLM_PLANNER_ENABLED=true`. Set this in your
+  `.env` file or environment; an example is provided in `.env.example`:
+  `OPENAI_API_KEY=sk-your-openai-api-key-here`.
+- **Human approvals**: operator decisions (for `human` approval mode) are
+  performed through the citizen-facing dashboard (`src/smartcity/services/citizen_interface.py`).
+  We made available de following users/tokens:
+  - admin: token123
+  - operator: token456
+  - viewer: token789
+- **MCP / service auth**: MCP servers run without token-based auth by default in
+  this repository. Production deployments should add transport-level security
+  (TLS, mTLS) or API tokens and configure the clients accordingly.
+
+Docker Compose wires the `OPENAI_API_KEY` into the `monitor` service; set it
+before `docker compose up` or copy `.env.example` to `.env` and edit as needed.
+
 
 The repository now supports the main experiment categories:
 
