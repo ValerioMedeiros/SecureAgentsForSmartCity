@@ -225,7 +225,7 @@ def print_configuration_info():
 
     llm_enabled = os.getenv("LLM_PLANNER_ENABLED", "false").lower() == "true"
     openai_key_set = bool(os.getenv("OPENAI_API_KEY", ""))
-    openai_model = os.getenv("OPENAI_MODEL", "gpt-4-turbo")
+    openai_model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
     llm_temp = os.getenv("LLM_TEMPERATURE", "0.3")
 
     print(f"LLM Planner Enabled: {llm_enabled}")
@@ -238,20 +238,50 @@ def print_configuration_info():
         print("Note: Set EXECUTE_PLANS=false to disable plan execution")
 
 
-if __name__ == "__main__":
+def _choose_and_run():
     print("\n" + "=" * 60)
     print("LLM Planner Examples - Smart City (pump use cases)")
     print("=" * 60)
 
     print_configuration_info()
 
-    # Run examples
-    # Note: These will use deterministic planner by default unless LLM is configured
-    #example_1_basic_llm_planning()
-    example_2_flood_response()
-    # example_3_combined_scenario()
-    # example_4_normal_operation()
+    menu = (
+        "Select example to run:\n"
+        "  1) Pump Failure Detection (example_1_basic_llm_planning)\n"
+        "  2) Flood Risk (example_2_flood_response)\n"
+        "  3) Combined Scenario (example_3_combined_scenario)\n"
+        "  4) Normal Operation (example_4_normal_operation)\n"
+        "  a) All examples in order\n"
+        "  q) Quit\n"
+        "Enter choice [1-4,a,q]: "
+    )
+
+    try:
+        choice = input(menu).strip().lower()
+    except (KeyboardInterrupt, EOFError):
+        print('\nInterrupted, exiting.')
+        return
+
+    if choice == "1":
+        example_1_basic_llm_planning()
+    elif choice == "2":
+        example_2_flood_response()
+    elif choice == "3":
+        example_3_combined_scenario()
+    elif choice == "4":
+        example_4_normal_operation()
+    elif choice in ("a", "all"):
+        example_1_basic_llm_planning()
+        example_2_flood_response()
+        example_3_combined_scenario()
+        example_4_normal_operation()
+    else:
+        print("No valid selection made, exiting.")
 
     print("\n" + "=" * 60)
     print("Examples Complete")
     print("=" * 60)
+
+
+if __name__ == "__main__":
+    _choose_and_run()

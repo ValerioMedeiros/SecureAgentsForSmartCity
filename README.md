@@ -77,53 +77,69 @@ Root-level Python files are kept as compatibility wrappers, so existing commands
 
 ### 1) One-time setup
 
+Create and activate a virtual environment and install the package (uses `pyproject.toml`):
+
 ```bash
-uv python install 3.11
-uv sync # Install uv for easier
+uv sync
+```
+
+or
+
+```powershell
+python -m venv .venv
+. .\.venv\Scripts\Activate.ps1
+pip install -e .
 ```
 
 ### 2) Start infrastructure
 
-```bash
-docker compose up -d
+Start all services with Docker Compose (will build images defined in `docker-compose.yml`):
+
+```powershell
+docker compose up -d --build
 ```
 
-### 3) Set environment variables on .env file (session)
+Wait until the MCP servers (pump/fiware/weather) and the monitor are healthy before proceeding.
 
-```bash
+### 4) Initialize MCP-backed resources (required)
+
+Before running scenarios or examples you MUST seed the pump and weather entities so the system can operate. Run these once after the infrastructure is up:
+
+```powershell
+# from project root (with venv activated)
+python -m src.smartcity.app.init_pumps
+python -m src.smartcity.app.init_weather_station
+```
+
+These scripts register pump endpoints and the weather station with the MCP/NGSI backends used by the executor and monitor.
+
+### 5) Set environment variables for a session
+
+Copy the example env and edit as needed:
+
+```powershell
 cp .env.example .env
 ```
 
-### 4) Run core flow (minimal)
+### 6) Run core flow
 
-Terminal 1 (Pump MCP server):
-```bash
-uv run pump-mcp-server http 8002
+Run the example planner:
+
+```powershell
+# Generate plans only
+python -m src.smartcity.app.examples_llm_planner
+
 ```
 
-Terminal 2 (Planner examples with execution):
-```bash
-$env:EXECUTE_PLANS="true"
-uv run -m src.smartcity.app.examples_llm_planner
-```
+When run interactively the `examples_llm_planner` module will prompt you to choose which example to run (1–4) or `a` to run all examples in order. Use the `EXECUTE_PLANS` environment variable to enable execution of generated plans.
 
-Or use the parametrized scenario runner:
-```bash
-$env:SCENARIO="A"
-uv run -m src.smartcity.app.host_simulator
-```
+### 7) Optional: dashboard, experiments
 
-Scenarios (for host_simulator or examples with specific events):
-- `A`: ambulance-only
-- `B`: flood-only
-- `C`: combined-flood-corridor
+```powershell
 
-### 5) Optional: monitor, dashboard, experiments
+streamlit run src/smartcity/ui/dashboard.py
+python -m src.smartcity.app.experiments
 
-```bash
-uv run uvicorn src.smartcity.services.monitor:app --host 0.0.0.0 --port 8010
-uv run streamlit run src/smartcity/ui/dashboard.py
-uv run -m src.smartcity.app.experiments
 ```
 
 ## Running Plans
@@ -145,24 +161,6 @@ This is useful for:
 - Exploring plan generation across different event types
 - Testing policy decisions and approval flows
 - Verifying end-to-end execution in a controlled manner
-
-### Option 2: Parametrized Scenario Runner
-
-The `host_simulator.py` script runs a single scenario determined by the `SCENARIO` environment variable:
-
-```bash
-$env:SCENARIO="A"
-uv run -m src.smartcity.app.host_simulator
-```
-
-This is useful for:
-- Running specific predefined scenarios repeatably
-- Scripting scenario-based experiments
-- Integration with monitoring and log aggregation
-
-**Note:** Both scripts require the Pump MCP server running on port 8002.
-
-**Note:** Root files are compatibility wrappers. Prefer `python -m src.smartcity...` and `uvicorn src.smartcity...` commands to avoid path/cwd issues.
 
 ## Plan Schema and Explainability
 
