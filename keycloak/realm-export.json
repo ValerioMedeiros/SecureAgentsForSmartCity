@@ -1,0 +1,84 @@
+{
+  "realm": "smartcity",
+  "enabled": true,
+  "displayName": "Smart City Secure Agents",
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "accessTokenLifespan": 1800,
+  "roles": {
+    "realm": [
+      {
+        "name": "pump_admin",
+        "description": "Full pump control: turn on, turn off, and notify."
+      },
+      {
+        "name": "pump_operator",
+        "description": "Operate pumps: turn on and turn off."
+      },
+      {
+        "name": "viewer",
+        "description": "Read-only role allowed to send/acknowledge notifications."
+      }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "smartcity-poc",
+      "name": "Smart City PoC Client",
+      "description": "Confidential client used by the Citizen-Facing Interface and the orchestrator to authenticate operators and validate plans.",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "smartcity-poc-secret",
+      "clientAuthenticatorType": "client-secret",
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": true,
+      "fullScopeAllowed": true,
+      "attributes": {
+        "access.token.lifespan": "1800"
+      }
+    }
+  ],
+  "users": [
+    {
+      "username": "admin",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "admin@smartcity.local",
+      "firstName": "City",
+      "lastName": "Administrator",
+      "credentials": [
+        { "type": "password", "value": "admin123", "temporary": false }
+      ],
+      "realmRoles": ["pump_admin"]
+    },
+    {
+      "username": "operator",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "operator@smartcity.local",
+      "firstName": "Pump",
+      "lastName": "Operator",
+      "credentials": [
+        { "type": "password", "value": "operator123", "temporary": false }
+      ],
+      "realmRoles": ["pump_operator"]
+    },
+    {
+      "username": "viewer",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "viewer@smartcity.local",
+      "firstName": "Read Only",
+      "lastName": "Viewer",
+      "credentials": [
+        { "type": "password", "value": "viewer123", "temporary": false }
+      ],
+      "realmRoles": ["viewer"]
+    }
+  ]
+}

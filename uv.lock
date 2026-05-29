@@ -2319,7 +2319,7 @@ wheels = [
 
 [[package]]
 name = "secure-agents-for-smart-city"
-version = "0.1.0"
+version = "0.1.2"
 source = { virtual = "." }
 dependencies = [
     { name = "fastapi" },
@@ -2329,6 +2329,7 @@ dependencies = [
     { name = "pandas" },
     { name = "prometheus-client" },
     { name = "pydantic" },
+    { name = "pyjwt", extra = ["crypto"] },
     { name = "python-dotenv" },
     { name = "requests" },
     { name = "streamlit" },
@@ -2344,6 +2345,7 @@ requires-dist = [
     { name = "pandas", specifier = ">=3.0.0" },
     { name = "prometheus-client", specifier = ">=0.20.0" },
     { name = "pydantic", specifier = ">=2.7.3" },
+    { name = "pyjwt", extras = ["crypto"], specifier = ">=2.8.0" },
     { name = "python-dotenv", specifier = ">=1.0.1" },
     { name = "requests", specifier = "==2.32.3" },
     { name = "streamlit", specifier = ">=1.50.0" },

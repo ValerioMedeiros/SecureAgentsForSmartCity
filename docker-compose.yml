@@ -28,6 +28,22 @@ services:
       retries: 5
     restart: unless-stopped
 
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0
+    container_name: smartcity-keycloak
+    command: ["start-dev", "--import-realm"]
+    environment:
+      - KEYCLOAK_ADMIN=admin
+      - KEYCLOAK_ADMIN_PASSWORD=admin
+      - KC_HEALTH_ENABLED=true
+      - KC_HOSTNAME_STRICT=false
+      - KC_HTTP_ENABLED=true
+    ports:
+      - "8090:8080"
+    volumes:
+      - ./keycloak/realm-export.json:/opt/keycloak/data/import/realm-export.json:ro
+    restart: unless-stopped
+
   opa:
     image: openpolicyagent/opa:0.68.0
     container_name: smartcity-opa
@@ -81,8 +97,16 @@ services:
       context: .
       dockerfile: Dockerfile.citizen-interface
     container_name: smartcity-citizen-interface
+    depends_on:
+      - keycloak
     ports:
       - "8020:8020"
+    environment:
+      - KEYCLOAK_ENABLED=true
+      - KEYCLOAK_URL=http://keycloak:8080
+      - KEYCLOAK_REALM=smartcity
+      - KEYCLOAK_CLIENT_ID=smartcity-poc
+      - KEYCLOAK_CLIENT_SECRET=smartcity-poc-secret
     restart: unless-stopped
 
   monitor:
@@ -96,6 +120,7 @@ services:
       - weather-mcp
       - citizen-interface
       - opa
+      - keycloak
     ports:
       - "8010:8010"
     environment:
@@ -105,6 +130,11 @@ services:
       - WEATHER_MCP_URL=http://weather-mcp:8003/mcp
       - OPA_URL=http://opa:8181
       - CITIZEN_INTERFACE_URL=http://citizen-interface:8020
+      - KEYCLOAK_ENABLED=true
+      - KEYCLOAK_URL=http://keycloak:8080
+      - KEYCLOAK_REALM=smartcity
+      - KEYCLOAK_CLIENT_ID=smartcity-poc
+      - KEYCLOAK_CLIENT_SECRET=smartcity-poc-secret
       - LLM_AGENT_ENABLED=true
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o-mini}

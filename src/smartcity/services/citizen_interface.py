@@ -19,10 +19,13 @@ from collections import deque
 from datetime import datetime, timezone
 from typing import Any, Deque, Dict, List, Optional
 
-from fastapi import FastAPI, Form, HTTPException, Response
+from fastapi import Cookie, FastAPI, Form, HTTPException, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel
 
+from ..core.models import ActionType
+from ..core.security import permissions_for_roles
+from ..infra import keycloak_auth
 from ..infra.audit import record_event
 from ..infra.logging_utils import configure_logger
 from ..infra.metrics import render_latest
@@ -35,6 +38,41 @@ _MAX_RUNS = 50
 _notifications: Deque[Dict[str, Any]] = deque(maxlen=_MAX_NOTIFICATIONS)
 _pending_approvals: Dict[str, Dict[str, Any]] = {}
 _runs: Deque[Dict[str, Any]] = deque(maxlen=_MAX_RUNS)
+
+# ── Operator sessions (IAM / Keycloak) ─────────────────────────────────
+# In-memory session store: cookie value -> authenticated operator context.
+_SESSION_COOKIE = "sc_session"
+_sessions: Dict[str, Dict[str, Any]] = {}
+
+
+def _build_session(token_response: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Validate the access token and derive the operator's permissions."""
+    access_token = token_response.get("access_token", "")
+    claims = keycloak_auth.validate_token(access_token)
+    if claims is None:
+        return None
+    roles = keycloak_auth.realm_roles(claims)
+    return {
+        "username": keycloak_auth.username_from_claims(claims),
+        "roles": sorted(roles),
+        "permissions": permissions_for_roles(roles),
+        "access_token": access_token,
+        "expires_at": datetime.now(timezone.utc).timestamp()
+        + float(token_response.get("expires_in", 0)),
+    }
+
+
+def _current_user(session_id: Optional[str]) -> Optional[Dict[str, Any]]:
+    """Return the active operator session, or None if absent/expired."""
+    if not session_id:
+        return None
+    session = _sessions.get(session_id)
+    if not session:
+        return None
+    if session["expires_at"] <= datetime.now(timezone.utc).timestamp():
+        _sessions.pop(session_id, None)
+        return None
+    return session
 
 
 # ── Models ────────────────────────────────────────────────────────────
@@ -127,6 +165,15 @@ _CSS = """
   .btn-deny{background:#dc2626;color:white}.btn-deny:hover{background:#b91c1c}
   .pump{font-family:monospace;color:#f0abfc}
   .empty{color:#475569;font-style:italic}
+  .authbar{float:right;font-size:.8rem;color:#94a3b8}
+  .authbar b{color:#7dd3fc}
+  .authbar a{color:#fca5a5;margin-left:12px}
+  .login-box{max-width:360px;margin:60px auto;background:#1e293b;padding:28px;border-radius:10px;border:1px solid #334155}
+  .login-box label{display:block;font-size:.8rem;color:#94a3b8;margin:12px 0 4px}
+  .login-box input{width:100%;box-sizing:border-box;padding:9px;border-radius:6px;border:1px solid #334155;background:#0f172a;color:#e2e8f0}
+  .login-box button{margin-top:20px;width:100%;background:#0ea5e9;color:white}
+  .login-box .err{color:#fca5a5;font-size:.85rem;margin-top:12px}
+  .login-box .hint{color:#64748b;font-size:.75rem;margin-top:16px;line-height:1.6}
 """
 
 _BASE = """<!DOCTYPE html>
@@ -140,6 +187,7 @@ _BASE = """<!DOCTYPE html>
   <h1>🏙️ Smart City — Painel do Operador</h1>
   <h2>{subtitle}</h2>
   <nav>
+    <span class="authbar">{authbar}</span>
     <a href="/" class="{home_active}">⏳ Aprovações</a>
     <a href="/runs" class="{runs_active}">📋 Execuções</a>
   </nav>
@@ -148,10 +196,30 @@ _BASE = """<!DOCTYPE html>
 </html>"""
 
 
-def _page(body: str, title: str, subtitle: str, active: str, refresh: int = 0) -> str:
+def _authbar(user: Optional[Dict[str, Any]]) -> str:
+    if not keycloak_auth.is_enabled():
+        return '<span style="color:#64748b">🔓 IAM desativado (modo PoC aberto)</span>'
+    if user:
+        roles = ", ".join(user.get("roles") or []) or "sem papéis"
+        return (
+            f'🔐 <b>{user["username"]}</b> ({roles}) '
+            f'<a href="/logout">sair</a>'
+        )
+    return '🔐 <a href="/login" style="color:#7dd3fc">Entrar</a>'
+
+
+def _page(
+    body: str,
+    title: str,
+    subtitle: str,
+    active: str,
+    refresh: int = 0,
+    user: Optional[Dict[str, Any]] = None,
+) -> str:
     refresh_tag = f'<meta http-equiv="refresh" content="{refresh}">' if refresh else ""
     return _BASE.format(
         refresh=refresh_tag, title=title, subtitle=subtitle, css=_CSS, body=body,
+        authbar=_authbar(user),
         home_active="active" if active == "home" else "",
         runs_active="active" if active == "runs" else "",
     )
@@ -187,7 +255,8 @@ _NOTIF_CARD = """
 
 
 @app.get("/", response_class=HTMLResponse)
-async def dashboard() -> str:
+async def dashboard(sc_session: Optional[str] = Cookie(default=None)) -> str:
+    user = _current_user(sc_session)
     pending = [v for v in _pending_approvals.values() if v["status"] == "pending"]
     pending.sort(key=lambda x: x["created_at"], reverse=True)
 
@@ -227,7 +296,7 @@ async def dashboard() -> str:
       {notifs_html}
     </div>"""
     return _page(body, "Aprovações", "Atualização automática a cada 5 segundos",
-                 active="home", refresh=5)
+                 active="home", refresh=5, user=user)
 
 
 # ── Runs page ──────────────────────────────────────────────────────────
@@ -325,7 +394,8 @@ def _run_card(r: Dict[str, Any]) -> str:
 
 
 @app.get("/runs", response_class=HTMLResponse)
-async def runs_page() -> str:
+async def runs_page(sc_session: Optional[str] = Cookie(default=None)) -> str:
+    user = _current_user(sc_session)
     items = list(_runs)
     if items:
         cards = "".join(_run_card(r) for r in items)
@@ -334,7 +404,7 @@ async def runs_page() -> str:
 
     body = f'<div class="section"><h3>📋 Histórico de Execuções ({len(items)})</h3>{cards}</div>'
     return _page(body, "Execuções", "Atualização automática a cada 10 segundos",
-                 active="runs", refresh=10)
+                 active="runs", refresh=10, user=user)
 
 
 @app.post("/runs")
@@ -346,6 +416,78 @@ async def receive_run(report: ExecutionReport) -> Dict[str, Any]:
                 report.trace_id[:8], report.outcome or "?",
                 extra={"traceId": report.trace_id})
     return {"status": "recorded"}
+
+
+# ── Authentication (Keycloak IAM) ──────────────────────────────────────
+
+_LOGIN_FORM = """
+<form class="login-box" method="post" action="/login">
+  <h3 style="margin-top:0;color:#7dd3fc">🔐 Login do Operador</h3>
+  {error}
+  <label>Usuário</label>
+  <input type="text" name="username" autofocus required>
+  <label>Senha</label>
+  <input type="password" name="password" required>
+  <button type="submit">Entrar</button>
+  <div class="hint">
+    Autenticação via Keycloak (realm <code>smartcity</code>).<br>
+    Usuários de teste:<br>
+    • <b>admin</b> / admin123 — pump_admin<br>
+    • <b>operator</b> / operator123 — pump_operator<br>
+    • <b>viewer</b> / viewer123 — viewer
+  </div>
+</form>"""
+
+
+@app.get("/login", response_class=HTMLResponse)
+async def login_page(error: Optional[str] = None) -> str:
+    err_html = f'<div class="err">{error}</div>' if error else ""
+    body = _LOGIN_FORM.format(error=err_html)
+    return _page(body, "Login", "Identity & Access Management (Keycloak)", active="")
+
+
+@app.post("/login")
+async def login_submit(
+    username: str = Form(...), password: str = Form(...)
+) -> Any:
+    try:
+        token_response = keycloak_auth.login(username, password)
+    except keycloak_auth.AuthError as exc:
+        logger.info("Login failed for %s: %s", username, exc)
+        return RedirectResponse(url=f"/login?error={exc}", status_code=303)
+
+    session = _build_session(token_response)
+    if session is None:
+        return RedirectResponse(
+            url="/login?error=Falha+ao+validar+token", status_code=303
+        )
+
+    session_id = str(uuid.uuid4())
+    _sessions[session_id] = session
+    logger.info("Operator authenticated: %s roles=%s",
+                session["username"], session["roles"])
+    record_event(
+        component="citizen_interface",
+        event_type="OPERATOR_LOGIN",
+        trace_id=str(uuid.uuid4()),
+        actor=session["username"],
+        outcome="authenticated",
+        payload={"roles": session["roles"], "source": "keycloak"},
+    )
+    response = RedirectResponse(url="/", status_code=303)
+    response.set_cookie(
+        _SESSION_COOKIE, session_id, httponly=True, samesite="lax", max_age=1800
+    )
+    return response
+
+
+@app.get("/logout")
+async def logout(sc_session: Optional[str] = Cookie(default=None)) -> Any:
+    if sc_session:
+        _sessions.pop(sc_session, None)
+    response = RedirectResponse(url="/", status_code=303)
+    response.delete_cookie(_SESSION_COOKIE)
+    return response
 
 
 # ── Notify ─────────────────────────────────────────────────────────────
@@ -420,23 +562,62 @@ async def get_approval(approval_id: str) -> Dict[str, Any]:
 
 
 @app.post("/approvals/{approval_id}/decide")
-async def decide_approval(approval_id: str, decision: str = Form(default="n")) -> Any:
+async def decide_approval(
+    approval_id: str,
+    decision: str = Form(default="n"),
+    sc_session: Optional[str] = Cookie(default=None),
+) -> Any:
     record = _pending_approvals.get(approval_id)
     if not record:
         raise HTTPException(status_code=404, detail="Approval not found")
     if record["status"] != "pending":
         raise HTTPException(status_code=409, detail="Already decided")
 
+    # IAM enforcement: when Keycloak is enabled, the operator must be
+    # authenticated AND hold a role that permits the requested actuation.
+    # This is the authorization boundary between plan generation and execution.
+    actor = "human_operator"
+    if keycloak_auth.is_enabled():
+        user = _current_user(sc_session)
+        if user is None:
+            return RedirectResponse(url="/login?error=Faça+login+para+aprovar",
+                                    status_code=303)
+        actor = user["username"]
+        try:
+            required_action = ActionType(record["action"])
+        except ValueError:
+            required_action = None
+        if required_action is not None and required_action not in user["permissions"]:
+            logger.warning(
+                "Operator %s lacks permission for %s on approval %s",
+                actor, record["action"], approval_id[:8],
+            )
+            record_event(
+                component="citizen_interface",
+                event_type="APPROVAL_FORBIDDEN",
+                trace_id=record.get("trace_id") or approval_id,
+                actor=actor,
+                outcome="forbidden",
+                payload={"pump_id": record["pump_id"], "action": record["action"],
+                         "roles": user.get("roles")},
+            )
+            raise HTTPException(
+                status_code=403,
+                detail=f"Operator '{actor}' is not authorized to approve "
+                       f"action '{record['action']}'",
+            )
+
     record["status"] = "approved" if decision.lower() == "s" else "denied"
     record["decided_at"] = datetime.now(timezone.utc).isoformat()
+    record["decided_by"] = actor
 
-    logger.info("Approval %s by operator: %s", record["status"], approval_id[:8],
+    logger.info("Approval %s by %s: %s", record["status"], actor, approval_id[:8],
                 extra={"traceId": record.get("trace_id") or ""})
     record_event(
         component="citizen_interface",
         event_type="APPROVAL_DECIDED",
         trace_id=record.get("trace_id") or approval_id,
-        actor="human_operator",
+        actor=actor,
         outcome=record["status"],
         payload={"pump_id": record["pump_id"], "action": record["action"]},
     )

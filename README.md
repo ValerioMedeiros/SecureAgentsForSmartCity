@@ -31,6 +31,24 @@ Research-oriented proof-of-concept implementing a minimal and explainable MAPE-K
 - Requests user token for approval when necessary
 - Entry point: `src/smartcity/core/security.py`.
 
+### Identity & Access Management (IAM — Keycloak)
+- Keycloak authenticates operators and issues scoped credentials (realm roles).
+- The Citizen-Facing Interface enforces the authorization boundary between plan
+  generation and execution: a human approval can only be granted by an
+  authenticated operator whose role permits the requested actuation.
+- Realm roles map to permitted actions:
+  - `pump_admin` → `turnOnPump`, `turnOffPump`, `notifyUser`
+  - `pump_operator` → `turnOnPump`, `turnOffPump`
+  - `viewer` → `notifyUser`
+- The authenticated operator identity is recorded in the hash-chained audit log
+  (`APPROVAL_DECIDED`/`APPROVAL_FORBIDDEN` events carry `actor=<username>`),
+  closing the end-to-end accountability loop.
+- Entry points: `src/smartcity/infra/keycloak_auth.py` (authentication and JWT
+  validation), `src/smartcity/core/security.py` (role → action mapping).
+- The realm (`smartcity`), the confidential client (`smartcity-poc`), the three
+  roles and the test users are provisioned automatically on startup from
+  `keycloak/realm-export.json` (`start-dev --import-realm`).
+
 
 ### Knowledge/Audit
 - Structured JSON logs in stdout and file (`logs/traces.jsonl`).
@@ -113,6 +131,8 @@ docker compose up -d --build
 ```
 
 Wait until the MCP servers (pump/fiware/weather) and the monitor are healthy before proceeding.
+Keycloak takes ~20–40s on first start to import the `smartcity` realm; it is ready once
+<http://localhost:8090/realms/smartcity> responds.
 
 ### 4) Initialize MCP-backed resources (required)
 
@@ -193,26 +213,59 @@ Implemented in Rego and fallback logic:
 
 ## Notes for Evaluation
 
-## Authentication
+## Authentication & IAM (Keycloak)
 
-Authentication in this project is intentionally minimal and handled via environment
-variables and the operator UI:
+Operator authentication is delegated to **Keycloak**, the IAM Generic Enabler of
+the proposed architecture. Keycloak comes up as part of `docker compose` and the
+realm is provisioned automatically on startup — no manual setup required.
 
-- **OPENAI_API_KEY**: required when `LLM_PLANNER_ENABLED=true`. Set this in your
-  `.env` file or environment; an example is provided in `.env.example`:
-  `OPENAI_API_KEY=sk-your-openai-api-key-here`.
-- **Human approvals**: operator decisions (for `human` approval mode) are
-  performed through the citizen-facing dashboard (`src/smartcity/services/citizen_interface.py`).
-  We made available de following users/tokens:
-  - admin: token123
-  - operator: token456
-  - viewer: token789
+### What is provisioned
+
+`keycloak/realm-export.json` is imported on startup (`start-dev --import-realm`)
+and creates:
+
+- realm `smartcity`;
+- confidential client `smartcity-poc` (direct access grant enabled);
+- realm roles `pump_admin`, `pump_operator`, `viewer`;
+- three test users:
+  - **admin** / `admin123` → `pump_admin`
+  - **operator** / `operator123` → `pump_operator`
+  - **viewer** / `viewer123` → `viewer`
+
+The Keycloak admin console is available at <http://localhost:8090> (admin/admin).
+
+### How it is enforced
+
+- The operator logs in at the Citizen-Facing Interface (`/login`,
+  <http://localhost:8020/login>). The interface authenticates the credentials
+  against Keycloak via the OAuth2 password grant and starts a session.
+- A pending pump approval can only be granted by an authenticated operator whose
+  realm role permits the requested action (`pump_operator`/`pump_admin` for pump
+  actuation). A `viewer` attempting to approve a pump action receives **403
+  Forbidden**, and an unauthenticated request is redirected to `/login`.
+- Bearer tokens are validated locally against the realm JWKS (RS256 signature,
+  issuer and expiry). The authenticated identity is written to the hash-chained
+  audit log, so every approval is attributable to a named operator.
+- Set `KEYCLOAK_ENABLED=false` to run the PoC in open mode (no authentication),
+  in which case the static fallback tokens below apply.
+
+### Helper
+
+Fetch an access token from the command line (defaults to operator):
+
+```bash
+./keycloak/get_token.sh operator operator123
+```
+
+### Other credentials
+
+- **OPENAI_API_KEY**: required when the LLM agent is enabled. Set it in `.env`
+  (see `.env.example`). Docker Compose wires it into the `monitor` service.
+- **Static fallback tokens** (used only when `KEYCLOAK_ENABLED=false`):
+  admin → `token123`, operator → `token456`, viewer → `token789`.
 - **MCP / service auth**: MCP servers run without token-based auth by default in
   this repository. Production deployments should add transport-level security
   (TLS, mTLS) or API tokens and configure the clients accordingly.
-
-Docker Compose wires the `OPENAI_API_KEY` into the `monitor` service; set it
-before `docker compose up` or copy `.env.example` to `.env` and edit as needed.
 
 
 The repository now supports the main experiment categories:
