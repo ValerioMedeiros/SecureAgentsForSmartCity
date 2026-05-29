@@ -74,6 +74,18 @@ Root-level Python files are kept as compatibility wrappers, so existing commands
 - `policies/traffic_policy.rego` - Rego policy
 - `docs/IMPLEMENTATION_NOTES.md` - implementation notes
 
+## Licensing
+
+The project source code is released under the MIT License. The Docker Compose
+demonstration uses third-party runtime components under their own licenses,
+including MongoDB Server under SSPL-1.0, FIWARE Orion Context Broker under
+AGPL-3.0, and Open Policy Agent under Apache-2.0.
+
+This Compose setup is intended for local reproduction of the scientific
+demonstration. It should not be described as a stack whose every component is
+OSI-approved open source. See `THIRD_PARTY_NOTICES.md` for the component-level
+notices and suggested wording for publication.
+
 ## Quickstart (Windows PowerShell)
 
 ### 1) One-time setup
