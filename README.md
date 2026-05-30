@@ -211,140 +211,140 @@ Implemented in Rego and fallback logic:
 - `medium` -> `human` -> yellow (requires human token)
 - `high` -> `deny` -> red
 
-## Experimento de Métricas (Prometheus)
+## Prometheus Metrics Experiment
 
-O script `tests/experimento_prometheus_tabela.py` coleta automaticamente as métricas
-expostas em `/metrics` (porta 8010) e do log de auditoria `logs/audit.jsonl` para
-produzir a tabela de resultados do artigo.
+The `tests/experimento_prometheus_tabela.py` script automatically collects metrics
+exposed at `/metrics` (port 8010) and from the audit log `logs/audit.jsonl` to
+produce the results table for the paper.
 
-### Pré-requisitos
+### Prerequisites
 
-Nenhum serviço externo é necessário para a execução básica — a política de fallback
-é usada quando OPA não está disponível. Para medir a latência real do OPA, suba o
-serviço com `docker compose up -d opa`.
+No external service is required for basic execution — the fallback policy is used
+when OPA is unavailable. To measure real OPA latency, bring up the service with
+`docker compose up -d opa`.
 
 ```bash
-# Execução básica (política de fallback, sem Docker obrigatório)
+# Basic execution (fallback policy, no Docker required)
 uv run python tests/experimento_prometheus_tabela.py --runs 10
 
-# Com OPA real (requer docker compose up -d opa)
+# With real OPA (requires docker compose up -d opa)
 uv run python tests/experimento_prometheus_tabela.py --runs 10 --with-opa
 
-# Pipeline completo: OPA + Keycloak + aprovação pump_operator + MCP real
+# Full pipeline: OPA + Keycloak + pump_operator approval + real MCP
 docker compose up -d opa keycloak citizen-interface pump-mcp
 uv run python tests/experimento_prometheus_tabela.py --full --runs 5
 ```
 
-O flag `--full` habilita o pipeline de ponta a ponta: OPA decide → executor bloqueia → o
-script cria um pedido de aprovação na Citizen Interface como usuário anônimo → aprova
-automaticamente com a conta `operator/operator123` (papel `pump_operator`, RBAC validado
-pelo Keycloak) → executa a ação de bomba via MCP client com instrumentação completa. Se
-algum dos quatro serviços estiver indisponível, o modo degrada automaticamente para o
-padrão com aviso.
+The `--full` flag enables the end-to-end pipeline: OPA decides → executor blocks →
+the script creates an approval request on the Citizen Interface as an anonymous user →
+automatically approves it with the `operator/operator123` account (role `pump_operator`,
+RBAC validated by Keycloak) → executes the pump action via MCP client with full
+instrumentation. If any of the four services is unavailable, the mode gracefully
+degrades to the standard mode with a warning.
 
-### Saídas
+### Outputs
 
-| Arquivo | Conteúdo |
-|---------|---------|
-| `paper/tabela_resultados.md` | Tabela Markdown pronta para o artigo |
-| `paper/metricas_raw.json` | Amostras brutas de latência e deltas de contadores |
+| File                         | Contents                              |
+|------------------------------|---------------------------------------|
+| `paper/tabela_resultados.md` | Markdown table ready for the paper    |
+| `paper/metricas_raw.json`    | Raw latency samples and counter deltas |
 
-### Métricas coletadas
+### Collected Metrics
 
-| Métrica | Fonte |
+| Metric | Source |
 | --- | --- |
-| Plan validity rate | Log de auditoria — evento `PLAN_CREATED` presente por trace_id |
-| OPA decision latency p50/p95 | Histograma `stage_duration_seconds{stage=policy_opa}` (delta before/after) |
-| End-to-end latency p50/p95 | Timing `perf_counter` in-process |
+| Plan validity rate | Audit log — `PLAN_CREATED` event present per trace_id |
+| OPA decision latency p50/p95 | Histogram `stage_duration_seconds{stage=policy_opa}` (delta before/after) |
+| End-to-end latency p50/p95 | In-process `perf_counter` timing |
 | MCP calls per plan | Δ`mcp_calls_total` / Δ`plans_total` |
 | Human approval rate | Δ`policy_decisions{approval_mode=human}` / Δ`policy_decisions_total` |
-| Unauthorized approval rejection | POST a `/approvals/{id}/decide` com papel viewer → 403 esperado |
-| Trace completeness | Fração de trace_ids com `PLAN_CREATED` + `EXECUTION_*` no log |
+| Unauthorized approval rejection | POST to `/approvals/{id}/decide` with viewer role → expected 403 |
+| Trace completeness | Fraction of trace_ids with `PLAN_CREATED` + `EXECUTION_*` in log |
 | Guardrail block rate | Δ`executions{status=blocked}` / Δ`executions_total` |
 
-### Resultados obtidos
+### Results
 
-#### Condições de execução
+#### Execution Conditions
 
-| Parâmetro | Valor |
+| Parameter | Value |
 | --- | --- |
-| Data | 2026-05-30 |
-| Runs por cenário | 5 |
-| Modo | `--full` (OPA + Keycloak + CI + Pump MCP) |
-| Modelo LLM | `gpt-4o-mini` |
-| Política de autorização | OPA (`http://localhost:8181`) |
-| Aprovação humana simulada | `operator/operator123` (`pump_operator`) via Citizen Interface |
-| Planner | LLM com fallback rule-based automático |
+| Date | 2026-05-30 |
+| Runs per scenario | 5 |
+| Mode | `--full` (OPA + Keycloak + CI + Pump MCP) |
+| LLM model | `gpt-4o-mini` |
+| Authorization policy | OPA (`http://localhost:8181`) |
+| Simulated human approval | `operator/operator123` (`pump_operator`) via Citizen Interface |
+| Planner | LLM with automatic rule-based fallback |
 
-#### Tabela de resultados principais
+#### Main Results Table
 
-| Métrica | Cenário A | Cenário B | Cenário adversarial |
+| Metric | Scenario A | Scenario B | Adversarial scenario |
 | --- | --- | --- | --- |
 | Plan validity rate | 100.0% | 100.0% | 100.0% |
 | OPA decision latency p50/p95 | 8.1 / 21.2 ms | 15.6 / 24.1 ms | 17.5 / 43.8 ms |
-| End-to-end latency p50/p95 | 5 312.5 / 6 869.5 ms | 3 811.1 / 4 017.1 ms | 4 256.3 / 7 180.5 ms |
+| End-to-end latency p50/p95 | 5,312.5 / 6,869.5 ms | 3,811.1 / 4,017.1 ms | 4,256.3 / 7,180.5 ms |
 | MCP calls per plan | 0.40 | 1.00 | 1.00 |
 | Human approval rate | 20.0% | 100.0% | 100.0% |
 | Unauthorized approval rejection | N/A | N/A | 100.0% |
 | Trace completeness | 100.0% | 100.0% | 100.0% |
 | Guardrail block rate | 16.7% | 50.0% | 50.0% |
 
-#### Contadores Prometheus — deltas acumulados por cenário
+#### Prometheus Counters — Cumulative Deltas per Scenario
 
-| Contador | Cenário A | Cenário B | Adversarial |
+| Counter | Scenario A | Scenario B | Adversarial |
 | --- | --- | --- | --- |
-| Planos gerados (`smartcity_plans_total`) | 5 | 5 | 5 |
-| Decisões de política (`policy_decisions_total`) | 5 | 5 | 5 |
-| Decisões com `approval_mode=human` | 1 | 5 | 5 |
-| Execuções total (`executions_total`) | 6¹ | 10¹ | 10¹ |
-| Execuções bloqueadas (`executions{status=blocked}`) | 1 | 5 | 5 |
-| Chamadas MCP (`mcp_calls_total`) | 2 | 5 | 5 |
+| Plans generated (`smartcity_plans_total`) | 5 | 5 | 5 |
+| Policy decisions (`policy_decisions_total`) | 5 | 5 | 5 |
+| Decisions with `approval_mode=human` | 1 | 5 | 5 |
+| Total executions (`executions_total`) | 6¹ | 10¹ | 10¹ |
+| Blocked executions (`executions{status=blocked}`) | 1 | 5 | 5 |
+| MCP calls (`mcp_calls_total`) | 2 | 5 | 5 |
 
-> ¹ No modo `--full`, cada run com `approval_mode=human` gera dois eventos em `executions_total`:
-> `blocked` (OPA recusa) + `completed` (aprovação → MCP). Por isso `executions_total > runs` nos
-> cenários com bloqueio.
+> ¹ In `--full` mode, each run with `approval_mode=human` generates two events in `executions_total`:
+> `blocked` (OPA rejects) + `completed` (approval → MCP). Hence `executions_total > runs` in
+> scenarios with blocking.
 
-#### Distribuição de latência ponta-a-ponta por run (ms)
+#### End-to-End Latency Distribution per Run (ms)
 
-| Run | Cenário A | Cenário B | Adversarial |
+| Run | Scenario A | Scenario B | Adversarial |
 | --- | --- | --- | --- |
-| 1 | 7 201.9 | 3 811.1 | 3 525.8 |
-| 2 | 5 539.9 | 4 024.0 | 4 150.8 |
-| 3 | 5 086.3 | 3 586.2 | 4 413.2 |
-| 4 | 5 312.5 | 3 989.5 | 4 256.3 |
-| 5 | 4 497.1 | 3 547.7 | 7 872.4 |
-| **Mín** | **4 497.1** | **3 547.7** | **3 525.8** |
-| **Média** | **5 527.5** | **3 791.7** | **4 843.7** |
-| **Máx** | **7 201.9** | **4 024.0** | **7 872.4** |
+| 1 | 7,201.9 | 3,811.1 | 3,525.8 |
+| 2 | 5,539.9 | 4,024.0 | 4,150.8 |
+| 3 | 5,086.3 | 3,586.2 | 4,413.2 |
+| 4 | 5,312.5 | 3,989.5 | 4,256.3 |
+| 5 | 4,497.1 | 3,547.7 | 7,872.4 |
+| **Min** | **4,497.1** | **3,547.7** | **3,525.8** |
+| **Mean** | **5,527.5** | **3,791.7** | **4,843.7** |
+| **Max** | **7,201.9** | **4,024.0** | **7,872.4** |
 
-### Análise dos resultados
+### Results Analysis
 
-**Eficácia dos guardrails com pipeline completo.** No modo `--full`, o OPA bloqueia
-100% das ações de controle de bomba nos cenários B e adversarial antes de qualquer
-chamada MCP. Após aprovação pelo `pump_operator` via Citizen Interface, o executor
-invoca o MCP client real — o que se reflete em `MCP calls per plan = 1.00` para esses
-cenários. No cenário A (baixo risco), 1 de 5 planos foi gerado pelo LLM com ação de
-bomba inesperada (comportamento "entusiasmado"), bloqueado e depois aprovado, resultando
-em 2 MCP calls para 5 planos (0.40). Isso demonstra empiricamente que a camada de
-política age como filtro independente do LLM.
+**Guardrail effectiveness with full pipeline.** In `--full` mode, OPA blocks 100% of
+pump control actions in scenarios B and adversarial before any MCP call is made. After
+approval by the `pump_operator` via Citizen Interface, the executor invokes the real
+MCP client — reflected in `MCP calls per plan = 1.00` for those scenarios. In scenario
+A (low risk), 1 of 5 plans was generated by the LLM with an unexpected pump action
+("eager" behavior), blocked and subsequently approved, resulting in 2 MCP calls for
+5 plans (0.40). This empirically demonstrates that the policy layer acts as a filter
+independent of the LLM.
 
-**Latência OPA medida.** Com OPA ativo, a latência de decisão política real é
-p50 = 8–18 ms e p95 = 21–44 ms nos três cenários — overhead negligenciável em relação
-ao tempo de geração do plano LLM (≈ 3,5–7 s). O p95 levemente mais alto no cenário
-adversarial (43,8 ms) corresponde a uma única avaliação mais lenta, não a degradação
-sistemática.
+**Measured OPA latency.** With OPA active, the real policy decision latency is
+p50 = 8–18 ms and p95 = 21–44 ms across the three scenarios — negligible overhead
+relative to LLM plan generation time (≈ 3.5–7 s). The slightly higher p95 in the
+adversarial scenario (43.8 ms) corresponds to a single slower evaluation, not
+systematic degradation.
 
-**Guardrail block rate com execuções compostas.** O block rate de 50% nos cenários B
-e adversarial é esperado e correto: cada run gera um evento `blocked` (OPA) seguido de
-um evento `completed` (pós-aprovação). A soma `blocked / (blocked + completed) = 5/10 = 50%`
-reflete o fluxo real de aprovação humana — a política não é contornada, apenas
-concluída após autorização explícita.
+**Guardrail block rate with composite executions.** The 50% block rate in scenarios B
+and adversarial is expected and correct: each run generates a `blocked` event (OPA)
+followed by a `completed` event (post-approval). The sum `blocked / (blocked + completed) = 5/10 = 50%`
+reflects the real human approval flow — the policy is not bypassed, but rather
+completed after explicit authorization.
 
-**Auditabilidade e controle de acesso.** A trace completeness de 100% confirma que o
-log hash-chained cobre o ciclo completo — do bloqueio pela política à confirmação de
-execução MCP registrada com `actor=full_pipeline`. O teste de rejeição não-autorizada
-(100% no adversarial) valida que `viewer` recebe **403 Forbidden** e usuários não
-autenticados são redirecionados para `/login` (303), ambos rastreados no log de auditoria.
+**Auditability and access control.** The 100% trace completeness confirms that the
+hash-chained log covers the full cycle — from policy blocking to MCP execution
+confirmation recorded with `actor=full_pipeline`. The unauthorized rejection test
+(100% in adversarial) validates that `viewer` receives **403 Forbidden** and
+unauthenticated users are redirected to `/login` (303), both tracked in the audit log.
 
 ---
 
