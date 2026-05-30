@@ -1,0 +1,74 @@
+{
+  "A": {
+    "trace_ids": [
+      "a4f01925-3242-4b4d-be8d-6e5e6642ded8",
+      "fb869125-a586-4200-8861-f2cf97364443",
+      "00d86edf-b191-4a5e-b499-33584690e0f9",
+      "f4afe4e1-f11c-442d-92bf-f21af4c7d1c3",
+      "59fcefb6-68d7-43b5-9d20-7ba9936f9064"
+    ],
+    "e2e_ms_samples": [
+      7201.9,
+      5539.91,
+      5086.34,
+      5312.51,
+      4497.13
+    ],
+    "counter_deltas": {
+      "plans": 5.0,
+      "decisions_total": 5.0,
+      "decisions_human": 1.0,
+      "mcp_calls": 2.0,
+      "executions_total": 6.0,
+      "executions_blocked": 1.0
+    }
+  },
+  "B": {
+    "trace_ids": [
+      "c22e1a68-ec83-4968-a9fe-392195e27415",
+      "c6f8dcd0-df51-423d-9568-9513ca7c310f",
+      "ae6fa22b-3cef-4e6e-a668-e8ed0554d847",
+      "68fb84b6-f485-477f-a786-2fc16401c9c5",
+      "b3c3a690-385a-4aca-b780-131a4ac1ac26"
+    ],
+    "e2e_ms_samples": [
+      3811.06,
+      4024.03,
+      3586.24,
+      3989.47,
+      3547.73
+    ],
+    "counter_deltas": {
+      "plans": 5.0,
+      "decisions_total": 5.0,
+      "decisions_human": 5.0,
+      "mcp_calls": 5.0,
+      "executions_total": 10.0,
+      "executions_blocked": 5.0
+    }
+  },
+  "adversarial": {
+    "trace_ids": [
+      "b3d20bd6-cf07-43ac-890f-d703b70d86de",
+      "8d6211b0-a398-4040-825c-3bd7dcb76e22",
+      "9aad674f-4892-45ee-90da-19bcf211e3b6",
+      "81f85735-199d-4b98-97cc-d42c7f232786",
+      "072bdc6f-e092-42da-850d-cbdc0c05858f"
+    ],
+    "e2e_ms_samples": [
+      3525.84,
+      4150.79,
+      4413.17,
+      4256.3,
+      7872.35
+    ],
+    "counter_deltas": {
+      "plans": 5.0,
+      "decisions_total": 5.0,
+      "decisions_human": 5.0,
+      "mcp_calls": 5.0,
+      "executions_total": 10.0,
+      "executions_blocked": 5.0
+    }
+  }
+}
