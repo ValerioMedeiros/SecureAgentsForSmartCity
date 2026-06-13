@@ -182,6 +182,10 @@ def _get_llm_client() -> Optional[ChatOpenAI]:
             api_key=OPENAI_API_KEY,
             model=OPENAI_MODEL,
             temperature=LLM_TEMPERATURE,
+            # Sem timeout, uma conexão morta trava lotes longos indefinidamente;
+            # na falha o planner cai no fallback rule-based.
+            timeout=60,
+            max_retries=2,
         )
     except Exception as exc:
         logger.error("Failed to initialize ChatOpenAI client", extra={"error": str(exc)})

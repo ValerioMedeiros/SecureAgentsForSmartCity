@@ -10,6 +10,9 @@ Pré-requisitos:
 Uso:
     uv run python tests/experimento_prometheus_tabela.py [--runs N] [--with-opa] [--full]
 
+    # Experimento completo do artigo (100 iterações por cenário, ~1.5-2 h):
+    uv run python tests/experimento_prometheus_tabela.py --full --runs 100
+
 Opções:
     --runs N      Iterações por cenário (padrão: 10)
     --with-opa    Habilita OPA se disponível em OPA_URL (padrão: desabilitado)
@@ -27,6 +30,7 @@ import argparse
 import json
 import os
 import re
+import statistics
 import sys
 import time
 import uuid
@@ -261,6 +265,12 @@ def _build_scenarios():
 
 # ── Execução dos cenários ─────────────────────────────────────────────
 
+def _progress(done: int, total: int) -> None:
+    """Feedback de progresso a cada 10 runs (lotes longos parecem travados sem isso)."""
+    if done % 10 == 0 and done < total:
+        print(f" {done}/{total}", end="", flush=True)
+
+
 def _run_batch(event: Any, n: int) -> Tuple[List[str], List[float]]:
     """Executa n iterações da pipeline regra-base. Retorna (trace_ids, e2e_ms)."""
     from smartcity.core.executor import execute_candidate_plan
@@ -269,7 +279,7 @@ def _run_batch(event: Any, n: int) -> Tuple[List[str], List[float]]:
     trace_ids: List[str] = []
     e2e_samples: List[float] = []
 
-    for _ in range(n):
+    for i in range(n):
         tid = str(uuid.uuid4())
         t0 = time.perf_counter()
         try:
@@ -279,6 +289,7 @@ def _run_batch(event: Any, n: int) -> Tuple[List[str], List[float]]:
             pass
         e2e_samples.append((time.perf_counter() - t0) * 1000.0)
         trace_ids.append(tid)
+        _progress(i + 1, n)
 
     return trace_ids, e2e_samples
 
@@ -367,7 +378,7 @@ def _run_batch_full(
     trace_ids: List[str] = []
     e2e_samples: List[float] = []
 
-    for _ in range(n):
+    for i in range(n):
         tid = str(uuid.uuid4())
         t0 = time.perf_counter()
         try:
@@ -435,6 +446,7 @@ def _run_batch_full(
             pass
         e2e_samples.append((time.perf_counter() - t0) * 1000.0)
         trace_ids.append(tid)
+        _progress(i + 1, n)
 
     return trace_ids, e2e_samples
 
@@ -566,13 +578,19 @@ class ScenarioResult:
     plan_validity_rate: Optional[float] = None
     opa_p50_ms: Optional[float] = None
     opa_p95_ms: Optional[float] = None
+    opa_p99_ms: Optional[float] = None
     e2e_p50_ms: Optional[float] = None
     e2e_p95_ms: Optional[float] = None
+    e2e_p99_ms: Optional[float] = None
+    e2e_min_ms: Optional[float] = None
+    e2e_mean_ms: Optional[float] = None
+    e2e_max_ms: Optional[float] = None
+    e2e_stdev_ms: Optional[float] = None
     mcp_per_plan: Optional[float] = None
     human_approval_rate: Optional[float] = None
     unauth_rejection_rate: Optional[float] = None
     trace_completeness: Optional[float] = None
-    guardrail_block_rate: Optional[float] = None
+    policy_block_rate: Optional[float] = None
     raw: Dict[str, Any] = field(default_factory=dict, repr=False)
 
 
@@ -582,10 +600,24 @@ def _pct(v: Optional[float]) -> str:
     return f"{v * 100:.1f}%" if v is not None else "N/A"
 
 
-def _lat(p50: Optional[float], p95: Optional[float]) -> str:
+def _lat(p50: Optional[float], p95: Optional[float], p99: Optional[float] = None) -> str:
     if p50 is None or p95 is None:
         return "N/A"
-    return f"{p50:.1f}/{p95:.1f} ms"
+    if p99 is None:
+        return f"{p50:.1f}/{p95:.1f} ms"
+    return f"{p50:.1f}/{p95:.1f}/{p99:.1f} ms"
+
+
+def _dist(
+    vmin: Optional[float],
+    mean: Optional[float],
+    stdev: Optional[float],
+    vmax: Optional[float],
+) -> str:
+    if vmin is None or mean is None or vmax is None:
+        return "N/A"
+    std = f"±{stdev:.1f}" if stdev is not None else ""
+    return f"{vmin:.1f} / {mean:.1f}{std} / {vmax:.1f} ms"
 
 
 def _num(v: Optional[float]) -> str:
@@ -594,20 +626,24 @@ def _num(v: Optional[float]) -> str:
 
 _ROWS = [
     ("Plan validity rate",              lambda r: _pct(r.plan_validity_rate)),
-    ("OPA decision latency p50/p95",    lambda r: _lat(r.opa_p50_ms, r.opa_p95_ms)),
-    ("End-to-end latency p50/p95",      lambda r: _lat(r.e2e_p50_ms, r.e2e_p95_ms)),
+    ("OPA decision latency p50/p95/p99",
+     lambda r: _lat(r.opa_p50_ms, r.opa_p95_ms, r.opa_p99_ms)),
+    ("End-to-end latency p50/p95/p99",
+     lambda r: _lat(r.e2e_p50_ms, r.e2e_p95_ms, r.e2e_p99_ms)),
+    ("End-to-end latency min/mean±std/max",
+     lambda r: _dist(r.e2e_min_ms, r.e2e_mean_ms, r.e2e_stdev_ms, r.e2e_max_ms)),
     ("MCP calls per plan",              lambda r: _num(r.mcp_per_plan)),
     ("Human approval rate",             lambda r: _pct(r.human_approval_rate)),
     ("Unauthorized approval rejection", lambda r: _pct(r.unauth_rejection_rate)),
     ("Trace completeness",              lambda r: _pct(r.trace_completeness)),
-    ("Guardrail block rate",            lambda r: _pct(r.guardrail_block_rate)),
+    ("Policy block rate (OPA)",         lambda r: _pct(r.policy_block_rate)),
 ]
 
 
 def _print_table(results: List[ScenarioResult]) -> None:
     headers = ["Métrica"] + [f"Cenário {r.label}" for r in results]
     col_w = 38
-    val_w = 20
+    val_w = 34
 
     def _row(cells: List[str]) -> str:
         parts = [f"{cells[0]:<{col_w}}"]
@@ -711,6 +747,9 @@ def main() -> int:
 
         snap_before = _parse_prom(_snapshot())
         if args.full and operator_session is not None:
+            # Sessão renovada por cenário: lotes longos (ex.: 100 runs) podem
+            # exceder o tempo de vida da sessão Keycloak do operador.
+            operator_session = _operator_login(_CITIZEN_URL)
             trace_ids, e2e_ms = _run_batch_full(
                 event, args.runs, operator_session, _CITIZEN_URL
             )
@@ -755,10 +794,21 @@ def main() -> int:
             {"stage": "policy_opa", "component": "opa"},
             0.95,
         ) if use_opa else None
+        opa_p99 = _hist_pct_ms(
+            snap_before, snap_after,
+            "smartcity_stage_duration_seconds",
+            {"stage": "policy_opa", "component": "opa"},
+            0.99,
+        ) if use_opa else None
 
-        # Percentis de latência ponta-a-ponta (amostras in-process)
+        # Estatísticas de latência ponta-a-ponta (amostras in-process)
         e2e_p50 = _percentile(e2e_ms, 0.50)
         e2e_p95 = _percentile(e2e_ms, 0.95)
+        e2e_p99 = _percentile(e2e_ms, 0.99)
+        e2e_min = round(min(e2e_ms), 2) if e2e_ms else None
+        e2e_mean = round(statistics.mean(e2e_ms), 2) if e2e_ms else None
+        e2e_max = round(max(e2e_ms), 2) if e2e_ms else None
+        e2e_stdev = round(statistics.stdev(e2e_ms), 2) if len(e2e_ms) > 1 else None
 
         # Taxas derivadas
         mcp_per_plan = round(mcp_total / plans_delta, 2) if plans_delta > 0 else None
@@ -785,16 +835,36 @@ def main() -> int:
             plan_validity_rate=pvr,
             opa_p50_ms=opa_p50,
             opa_p95_ms=opa_p95,
+            opa_p99_ms=opa_p99,
             e2e_p50_ms=e2e_p50,
             e2e_p95_ms=e2e_p95,
+            e2e_p99_ms=e2e_p99,
+            e2e_min_ms=e2e_min,
+            e2e_mean_ms=e2e_mean,
+            e2e_max_ms=e2e_max,
+            e2e_stdev_ms=e2e_stdev,
             mcp_per_plan=mcp_per_plan,
             human_approval_rate=human_rate,
             unauth_rejection_rate=unauth_rate,
             trace_completeness=tc,
-            guardrail_block_rate=block_rate,
+            policy_block_rate=block_rate,
             raw={
                 "trace_ids": trace_ids,
                 "e2e_ms_samples": [round(v, 2) for v in e2e_ms],
+                "e2e_stats": {
+                    "min": e2e_min,
+                    "mean": e2e_mean,
+                    "max": e2e_max,
+                    "stdev": e2e_stdev,
+                    "p50": e2e_p50,
+                    "p95": e2e_p95,
+                    "p99": e2e_p99,
+                },
+                "opa_stats": {
+                    "p50": opa_p50,
+                    "p95": opa_p95,
+                    "p99": opa_p99,
+                },
                 "counter_deltas": {
                     "plans": plans_delta,
                     "decisions_total": decisions_total,
@@ -809,8 +879,8 @@ def main() -> int:
         raw_export[label] = result.raw
 
         print(
-            f" ok  (e2e p50={e2e_p50:.0f} ms, p95={e2e_p95:.0f} ms,"
-            f" planos={plans_delta:.0f})"
+            f" ok  (e2e mean={e2e_mean:.0f} ms, p50={e2e_p50:.0f} ms,"
+            f" p95={e2e_p95:.0f} ms, planos={plans_delta:.0f})"
         )
 
     _print_table(results)

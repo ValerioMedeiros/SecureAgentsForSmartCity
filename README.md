@@ -7,7 +7,7 @@ Research-oriented proof-of-concept implementing a minimal and explainable MAPE-K
 - Separation of reasoning and execution:
   - Planner generates structured candidate plans only.
   - Executor performs side effects only after policy approval.
-- Policy guardrails:
+- Policy enforcement:
   - OPA/Rego controls whether plans are auto-approved, require human approval, or denied.
 - End-to-end auditability:
   - Every stage is correlated by trace ID and persisted as JSON logs.
@@ -73,7 +73,7 @@ Root-level Python files are kept as compatibility wrappers, so existing commands
 
 - `src/smartcity/core/plan_schema.py` - typed schemas and validators
 - `src/smartcity/core/planner.py` - candidate plan generation
-- `src/smartcity/core/policy_engine.py` - OPA client and fallback guardrails
+- `src/smartcity/core/policy_engine.py` - OPA client and fallback policy rules
 - `src/smartcity/core/executor.py` - policy-gated execution
 - `src/smartcity/infra/logging_utils.py` - JSON logging utilities
 - `src/smartcity/infra/ngsi_client.py` - NGSI-v2 entity and subscription helpers
@@ -232,7 +232,7 @@ uv run python tests/experimento_prometheus_tabela.py --runs 10 --with-opa
 
 # Full pipeline: OPA + Keycloak + pump_operator approval + real MCP
 docker compose up -d opa keycloak citizen-interface pump-mcp
-uv run python tests/experimento_prometheus_tabela.py --full --runs 5
+uv run python tests/experimento_prometheus_tabela.py --full --runs 100
 ```
 
 The `--full` flag enables the end-to-end pipeline: OPA decides → executor blocks →
@@ -254,13 +254,13 @@ degrades to the standard mode with a warning.
 | Metric | Source |
 | --- | --- |
 | Plan validity rate | Audit log — `PLAN_CREATED` event present per trace_id |
-| OPA decision latency p50/p95 | Histogram `stage_duration_seconds{stage=policy_opa}` (delta before/after) |
-| End-to-end latency p50/p95 | In-process `perf_counter` timing |
+| OPA decision latency p50/p95/p99 | Histogram `stage_duration_seconds{stage=policy_opa}` (delta before/after) |
+| End-to-end latency p50/p95/p99, min/mean±std/max | In-process `perf_counter` timing |
 | MCP calls per plan | Δ`mcp_calls_total` / Δ`plans_total` |
 | Human approval rate | Δ`policy_decisions{approval_mode=human}` / Δ`policy_decisions_total` |
 | Unauthorized approval rejection | POST to `/approvals/{id}/decide` with viewer role → expected 403 |
 | Trace completeness | Fraction of trace_ids with `PLAN_CREATED` + `EXECUTION_*` in log |
-| Guardrail block rate | Δ`executions{status=blocked}` / Δ`executions_total` |
+| Policy block rate (OPA) | Δ`executions{status=blocked}` / Δ`executions_total` |
 
 ### Results
 
@@ -268,83 +268,102 @@ degrades to the standard mode with a warning.
 
 | Parameter | Value |
 | --- | --- |
-| Date | 2026-05-30 |
-| Runs per scenario | 5 |
+| Date | 2026-06-12 |
+| Runs per scenario | 100 |
 | Mode | `--full` (OPA + Keycloak + CI + Pump MCP) |
-| LLM model | `gpt-4o-mini` |
+| LLM model | `gpt-4o-mini` (request timeout 60 s, ≤ 2 retries) |
 | Authorization policy | OPA (`http://localhost:8181`) |
 | Simulated human approval | `operator/operator123` (`pump_operator`) via Citizen Interface |
-| Planner | LLM with automatic rule-based fallback |
+| Planner | LLM with automatic rule-based fallback — 235/300 runs LLM-planned; 65 fallbacks, all in scenario A (63 LLM-as-judge guardrail rejections, 2 schema-validation failures) |
 
 #### Main Results Table
+
+> *Terminology: throughout this section, "guardrail" refers exclusively to the
+> model-level LLM-as-judge safety check applied to candidate plans; plan blocking
+> performed by OPA is reported as policy enforcement ("policy block").*
 
 | Metric | Scenario A | Scenario B | Adversarial scenario |
 | --- | --- | --- | --- |
 | Plan validity rate | 100.0% | 100.0% | 100.0% |
-| OPA decision latency p50/p95 | 8.1 / 21.2 ms | 15.6 / 24.1 ms | 17.5 / 43.8 ms |
-| End-to-end latency p50/p95 | 5,312.5 / 6,869.5 ms | 3,811.1 / 4,017.1 ms | 4,256.3 / 7,180.5 ms |
-| MCP calls per plan | 0.40 | 1.00 | 1.00 |
-| Human approval rate | 20.0% | 100.0% | 100.0% |
+| OPA decision latency p50/p95/p99 | 7.8 / 19.2 / 23.9 ms | 7.7 / 20.4 / 25.0 ms | 7.6 / 21.7 / 25.0 ms |
+| End-to-end latency p50/p95/p99 | 4,475.1 / 5,957.3 / 7,764.6 ms | 4,979.1 / 6,080.6 / 7,652.9 ms | 4,596.6 / 6,192.2 / 7,928.2 ms |
+| MCP calls per plan | 0.46 | 1.00 | 1.00 |
+| Human approval rate | 35.0% | 100.0% | 100.0% |
 | Unauthorized approval rejection | N/A | N/A | 100.0% |
 | Trace completeness | 100.0% | 100.0% | 100.0% |
-| Guardrail block rate | 16.7% | 50.0% | 50.0% |
+| Policy block rate (OPA) | 25.9% | 50.0% | 50.0% |
 
 #### Prometheus Counters — Cumulative Deltas per Scenario
 
 | Counter | Scenario A | Scenario B | Adversarial |
 | --- | --- | --- | --- |
-| Plans generated (`smartcity_plans_total`) | 5 | 5 | 5 |
-| Policy decisions (`policy_decisions_total`) | 5 | 5 | 5 |
-| Decisions with `approval_mode=human` | 1 | 5 | 5 |
-| Total executions (`executions_total`) | 6¹ | 10¹ | 10¹ |
-| Blocked executions (`executions{status=blocked}`) | 1 | 5 | 5 |
-| MCP calls (`mcp_calls_total`) | 2 | 5 | 5 |
+| Plans generated (`smartcity_plans_total`) | 100 | 100 | 100 |
+| Policy decisions (`policy_decisions_total`) | 100 | 100 | 100 |
+| Decisions with `approval_mode=human` | 35 | 100 | 100 |
+| Total executions (`executions_total`) | 135¹ | 200¹ | 200¹ |
+| Blocked executions (`executions{status=blocked}`) | 35 | 100 | 100 |
+| MCP calls (`mcp_calls_total`) | 46 | 100 | 100 |
 
 > ¹ In `--full` mode, each run with `approval_mode=human` generates two events in `executions_total`:
 > `blocked` (OPA rejects) + `completed` (approval → MCP). Hence `executions_total > runs` in
 > scenarios with blocking.
 
-#### End-to-End Latency Distribution per Run (ms)
+#### End-to-End Latency Distribution (ms, N = 100 runs per scenario)
 
-| Run | Scenario A | Scenario B | Adversarial |
+| Statistic | Scenario A | Scenario B | Adversarial |
 | --- | --- | --- | --- |
-| 1 | 7,201.9 | 3,811.1 | 3,525.8 |
-| 2 | 5,539.9 | 4,024.0 | 4,150.8 |
-| 3 | 5,086.3 | 3,586.2 | 4,413.2 |
-| 4 | 5,312.5 | 3,989.5 | 4,256.3 |
-| 5 | 4,497.1 | 3,547.7 | 7,872.4 |
-| **Min** | **4,497.1** | **3,547.7** | **3,525.8** |
-| **Mean** | **5,527.5** | **3,791.7** | **4,843.7** |
-| **Max** | **7,201.9** | **4,024.0** | **7,872.4** |
+| Min | 3,666.4 | 3,951.6 | 3,374.8 |
+| Mean ± std dev | 4,652.5 ± 837.3 | 5,042.6 ± 667.4 | 4,855.8 ± 874.5 |
+| p50 (median) | 4,475.1 | 4,979.1 | 4,596.6 |
+| p95 | 5,957.3 | 6,080.6 | 6,192.2 |
+| p99 | 7,764.6 | 7,652.9 | 7,928.2 |
+| Max | 8,506.5 | 8,957.9 | 8,863.5 |
+
+The 300 raw per-run latency samples are preserved in `paper/metricas_raw.json`
+(`e2e_ms_samples`), together with per-scenario aggregated statistics (`e2e_stats`,
+`opa_stats`) and Prometheus counter deltas, for independent verification.
 
 ### Results Analysis
 
-**Guardrail effectiveness with full pipeline.** In `--full` mode, OPA blocks 100% of
-pump control actions in scenarios B and adversarial before any MCP call is made. After
-approval by the `pump_operator` via Citizen Interface, the executor invokes the real
-MCP client — reflected in `MCP calls per plan = 1.00` for those scenarios. In scenario
-A (low risk), 1 of 5 plans was generated by the LLM with an unexpected pump action
-("eager" behavior), blocked and subsequently approved, resulting in 2 MCP calls for
-5 plans (0.40). This empirically demonstrates that the policy layer acts as a filter
-independent of the LLM.
+**Policy enforcement effectiveness with full pipeline.** In `--full` mode, OPA blocks
+100% of pump control actions in scenarios B and adversarial before any MCP call is
+made. After approval by the `pump_operator` via Citizen Interface, the executor invokes
+the real MCP client — reflected in `MCP calls per plan = 1.00` for those scenarios. In
+scenario A (low risk), the defense operated in two independent layers: the LLM-as-judge
+safety guardrail rejected 63 of 100 LLM-generated plans before policy evaluation
+(replaced by the deterministic rule-based fallback), and 2 further plans failed schema
+validation. The 35 LLM plans that passed contained an unexpected pump action ("eager"
+behavior); all 35 were blocked by OPA and subsequently approved, producing 46 MCP calls
+over 100 plans (0.46 — some plans contain two pump steps). This empirically
+demonstrates that the model-level guardrail (LLM-as-judge) and the policy enforcement
+layer (OPA) act as filters independent of the LLM.
 
 **Measured OPA latency.** With OPA active, the real policy decision latency is
-p50 = 8–18 ms and p95 = 21–44 ms across the three scenarios — negligible overhead
-relative to LLM plan generation time (≈ 3.5–7 s). The slightly higher p95 in the
-adversarial scenario (43.8 ms) corresponds to a single slower evaluation, not
-systematic degradation.
+p50 = 7.6–7.8 ms, p95 = 19.2–21.7 ms and p99 = 23.9–25.0 ms across the three
+scenarios — negligible overhead relative to LLM plan generation time (≈ 3.4–9.0 s).
+With N = 100 runs per scenario, the tail estimates are stable and consistent across
+scenarios, eliminating the single-sample artifacts observed in the earlier N = 5 batch.
 
-**Guardrail block rate with composite executions.** The 50% block rate in scenarios B
-and adversarial is expected and correct: each run generates a `blocked` event (OPA)
-followed by a `completed` event (post-approval). The sum `blocked / (blocked + completed) = 5/10 = 50%`
-reflects the real human approval flow — the policy is not bypassed, but rather
-completed after explicit authorization.
+**Policy block rate with composite executions.** The 50% policy block rate in
+scenarios B and adversarial is expected and correct: each run generates a `blocked`
+event (OPA) followed by a `completed` event (post-approval). The sum
+`blocked / (blocked + completed) = 100/200 = 50%` reflects the real human approval
+flow — the policy is not bypassed, but rather completed after explicit authorization.
+In scenario A the same arithmetic yields `35/135 = 25.9%`, driven by the 35 eager
+LLM plans.
 
-**Auditability and access control.** The 100% trace completeness confirms that the
-hash-chained log covers the full cycle — from policy blocking to MCP execution
-confirmation recorded with `actor=full_pipeline`. The unauthorized rejection test
-(100% in adversarial) validates that `viewer` receives **403 Forbidden** and
+**Auditability and access control.** The 100% trace completeness over all 300 traces
+confirms that the hash-chained log covers the full cycle — from policy blocking to MCP
+execution confirmation recorded with `actor=full_pipeline`. The unauthorized rejection
+test (100% in adversarial) validates that `viewer` receives **403 Forbidden** and
 unauthenticated users are redirected to `/login` (303), both tracked in the audit log.
+
+**Statistical robustness.** Each scenario was executed 100 times (300 runs in total),
+and the latency tables report dispersion (standard deviation of 667–875 ms) and tail
+percentiles (p99 < 8 s) rather than individual runs. End-to-end latency is dominated
+by LLM inference in all runs — including fallback runs, which still incur the LLM
+generation and safety-check round-trips before reverting to the rule-based planner —
+yielding a homogeneous, unimodal latency distribution across scenarios.
 
 ---
 
@@ -407,7 +426,7 @@ Fetch an access token from the command line (defaults to operator):
 
 The repository now supports the main experiment categories:
 
-- guardrail effectiveness,
+- guardrail and policy enforcement effectiveness,
 - latency impact,
 - scenario robustness.
 
