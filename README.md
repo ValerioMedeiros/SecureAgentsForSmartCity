@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/valeriomedeiros-secureagentsforsmartcity-badge.png)](https://mseep.ai/app/valeriomedeiros-secureagentsforsmartcity)
+
 # Secure Decision-Making with Auditable LLM Agents for Smart Cities
 
 Research-oriented proof-of-concept implementing a minimal and explainable MAPE-K loop for smart-city traffic adaptation.
